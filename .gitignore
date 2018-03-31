@@ -1,0 +1,7 @@
+/book/
+/cryptopals.com/
+/target/
+**/*.rs.bk
+Cargo.lock
+*~
+.*.sw?
