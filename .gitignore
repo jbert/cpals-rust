@@ -5,3 +5,6 @@
 Cargo.lock
 *~
 .*.sw?
+
+/target
+**/*.rs.bk
