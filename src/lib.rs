@@ -17,29 +17,6 @@ pub mod convert {
     use itertools::Itertools;
 
     pub fn hex2bytes(hex_str: &str) -> Result<Vec<u8>, String> {
-        /*
-        let mut bytes: Vec<u8> = Vec::new();
-        let i = hex_str.chars();
-        loop {
-            let hi = i.next();
-            if hi.is_none() {
-                // We have our bytes
-                return Ok(bytes)
-            }
-            let hi = hi.unwrap();
-
-            let lo = i.next();
-            if lo.is_none() {
-                return Err("Odd length hex string");
-            }
-            let lo = lo.unwrap();
-
-            let hi = char2nibble(hi);
-            match hi {
-            let byte = (char2nibble(hi) << 4) | char2nibble(lo);
-            bytes.push(byte);
-        }
-        */
         // Get iterator of nibbles-or-errors
         hex_str.chars().map(hexchar2nibble).batching(|it| {
             match it.next() {
