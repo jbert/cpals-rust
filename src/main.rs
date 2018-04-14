@@ -1,5 +1,13 @@
 extern crate cpals;
 
 fn main() {
-    //cpals::set1::challenge1();
+    #[derive(Debug)]
+    struct TestCase {
+        s: &'static str,
+        i: i32,
+    }
+    
+    let tc = TestCase{s: "foo", i: 10};
+    println!("tc is {:?}", tc);
+    //cpals::set1::challenge3();
 }

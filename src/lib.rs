@@ -1,5 +1,26 @@
 extern crate itertools;
 extern crate base64;
+#[macro_use] extern crate maplit;
+
+pub mod set1 {
+    use convert;
+    use util;
+
+    pub fn challenge3() {
+        let msg = convert::hex2bytes("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap();
+//        let k = 65;
+//        let buf = util::xor(k, &msg);
+//        println!("buf is {:?}", buf);
+
+        let ec = util::english_frequencies();
+
+        for k in 0..255 {
+            let buf = util::xor(k, &msg);
+            let cc = util::CharCount::from_bytes(&buf);
+            println!("{}: Distance from english is: {}", k, cc.char_freq().distance(&ec));
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -20,22 +41,146 @@ mod tests {
 
         #[test]
         fn challenge2() {
-            util::xor("1234".as_bytes(), "12345".as_bytes()).unwrap_err();
+            util::xor_buf("1234".as_bytes(), "12345".as_bytes()).unwrap_err();
 
-            assert_eq!(util::xor("".as_bytes(), "".as_bytes()).unwrap(), "".as_bytes());
+            assert_eq!(util::xor_buf("".as_bytes(), "".as_bytes()).unwrap(), "".as_bytes());
 
             let xs = convert::hex2bytes("1c0111001f010100061a024b53535009181c").unwrap();
             let ys = convert::hex2bytes("686974207468652062756c6c277320657965").unwrap();
 
             let expected = convert::hex2bytes("746865206b696420646f6e277420706c6179").unwrap();
-            assert_eq!(util::xor(&xs, &ys).unwrap(), expected);
+            assert_eq!(util::xor_buf(&xs, &ys).unwrap(), expected);
+        }
+
+        #[test]
+        fn char_frequency() {
+            struct TestCase {
+                in_str: &'static[u8],
+                reference: util::CharFreq,
+                distance: f64
+            }
+            
+            let test_cases = [
+                TestCase{in_str: b"foo", reference: util::CharFreq(hashmap!{'f' => 1.0/3.0, 'o'=>2.0/3.0}), distance: 0.0},
+                TestCase{in_str: b"a", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 1.0},
+                TestCase{in_str: b"ab", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 0.5},
+            ];
+
+            for test_case in test_cases.iter() {
+                let cc = util::CharCount::from_bytes(test_case.in_str);
+                assert_eq!(cc.char_freq().distance(&test_case.reference), test_case.distance);
+            }
         }
     }
 }
 
 pub mod util {
 
-    pub fn xor(xs: &[u8], ys: &[u8]) -> Result<Vec<u8>, String> {
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+
+    pub struct CharFreq(pub HashMap<char,f64>);
+
+    impl CharFreq {
+
+        pub fn freq(&self, c: char) -> f64 {
+            match self.0.get(&c) {
+                None => 0.0,
+                Some(f) => *f,
+            }
+        }
+
+        pub fn distance(&self, other: &CharFreq) -> f64 {
+            let key_set: HashSet<&char> = self.0.keys().collect();
+            let other_set: HashSet<&char> = other.0.keys().collect();
+
+            let mut char_count = 0;
+            let mut distance: f64 = 0.0;
+            for c in key_set.union(&other_set) {
+                let this = self.freq(**c);
+                let that = other.freq(**c);
+                distance += (this-that).abs();
+                char_count += 1;
+            }
+            println!("JB - rawdist {} char_count {}", distance, char_count);
+            distance / char_count as f64
+        }
+    }
+
+    pub struct CharCount {
+        total: usize,
+        counts: HashMap<char,usize>,
+    }
+
+    impl CharCount {
+        pub fn from_bytes(buf: &[u8]) -> CharCount {
+            let mut cf = CharCount{total: 0, counts: HashMap::new()};
+            cf.add_bytes(buf);
+            cf
+        }
+
+        fn add_bytes(&mut self, buf: &[u8]) {
+            for b in buf {
+                self.add_byte(*b);
+            }
+        }
+
+        fn add_byte(&mut self, b: u8) {
+            self.add_char(b as char);
+        }
+
+        fn add_char(&mut self, c: char) {
+            self.total += 1;
+            let counter = self.counts.entry(c).or_insert(0);
+            *counter += 1;
+        }
+        
+        pub fn char_freq(&self) -> CharFreq {
+            let m: HashMap<char, f64> = self.counts.iter().map(|(k, v)| {
+                (*k, *v as f64 / self.total as f64)
+            }).collect();
+            CharFreq(m)
+        }
+
+    }
+
+    // Ladies and gentlemen - your friend and mine - Etaoin Shrdlu
+    pub fn english_frequencies() -> CharFreq {
+        CharFreq(hashmap!(
+            'a' => 8.167,
+            'b' => 1.492,
+            'c' => 2.782,
+            'd' => 4.253,
+            'e' => 12.702,
+            'f' => 2.228,
+            'g' => 2.015,
+            'h' => 6.094,
+            'i' => 6.966,
+            'j' => 0.153,
+            'k' => 0.772,
+            'l' => 4.025,
+            'm' => 2.406,
+            'n' => 6.749,
+            'o' => 7.507,
+            'p' => 1.929,
+            'q' => 0.095,
+            'r' => 5.987,
+            's' => 6.327,
+            't' => 9.056,
+            'u' => 2.758,
+            'v' => 0.978,
+            'w' => 2.360,
+            'x' => 0.150,
+            'y' => 1.974,
+            'z' => 0.074,
+            ))
+    }
+
+    pub fn xor(x: u8, ys: &[u8]) -> Vec<u8> {
+        ys.iter().map(|y| { x ^ y }).collect()
+    }
+
+    pub fn xor_buf(xs: &[u8], ys: &[u8]) -> Result<Vec<u8>, String> {
         if xs.len() != ys.len() {
             return Err(format!("xor: buf size mismatch: {} != {}", xs.len(), ys.len()))
         }
