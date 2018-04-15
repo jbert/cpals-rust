@@ -5,6 +5,7 @@ extern crate base64;
 pub mod set1 {
     use convert;
     use util;
+    use std::f64;
 
     pub fn challenge3() {
         let msg = convert::hex2bytes("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap();
@@ -14,11 +15,21 @@ pub mod set1 {
 
         let ec = util::english_frequencies();
 
+        let mut min_distance = f64::MAX;
+        let mut min_dist_k = 0;
         for k in 0..255 {
             let buf = util::xor(k, &msg);
             let cc = util::CharCount::from_bytes(&buf);
-            println!("{}: Distance from english is: {}", k, cc.char_freq().distance(&ec));
+            let distance = cc.char_freq().distance(&ec);
+            if distance < min_distance {
+                min_dist_k = k;
+                min_distance = distance;
+            }
+//            println!("JB {} {}: {}", k, distance, convert::b2s(&buf));
         }
+        //println!("{}: min distance from english is: {}", min_dist_k, min_distance);
+        let plaintext = util::xor(min_dist_k, &msg);
+        println!("S1 C3 msg is: {}", convert::b2s(&plaintext));
     }
 }
 
@@ -62,13 +73,33 @@ mod tests {
             
             let test_cases = [
                 TestCase{in_str: b"foo", reference: util::CharFreq(hashmap!{'f' => 1.0/3.0, 'o'=>2.0/3.0}), distance: 0.0},
-                TestCase{in_str: b"a", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 1.0},
-                TestCase{in_str: b"ab", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 0.5},
+                TestCase{in_str: b"a", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 2.0},
+                TestCase{in_str: b"ab", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 1.0},
             ];
 
             for test_case in test_cases.iter() {
                 let cc = util::CharCount::from_bytes(test_case.in_str);
-                assert_eq!(cc.char_freq().distance(&test_case.reference), test_case.distance);
+                assert_eq!(test_case.distance, cc.char_freq().distance(&test_case.reference));
+            }
+        }
+
+        #[test]
+        fn char_count() {
+            let test_cases = [
+                ("foo", "foo", 0.0),
+                ("foo", "oof", 0.0),
+                ("foo", "foofoo", 0.0),
+                ("foo", "foofoofoo", 0.0),
+                ("a", "b", 2.0),
+                ("aa", "bb", 2.0),
+                ("a", "bc", 2.0),
+            ];
+
+            for test_case in test_cases.iter() {
+                let (x, y, distance) = *test_case;
+                let xc = util::CharCount::from_bytes(&convert::s2b(x));
+                let yc = util::CharCount::from_bytes(&convert::s2b(y));
+                assert_eq!(distance, xc.char_freq().distance(&yc.char_freq()));
             }
         }
     }
@@ -94,16 +125,16 @@ pub mod util {
             let key_set: HashSet<&char> = self.0.keys().collect();
             let other_set: HashSet<&char> = other.0.keys().collect();
 
-            let mut char_count = 0;
             let mut distance: f64 = 0.0;
             for c in key_set.union(&other_set) {
                 let this = self.freq(**c);
                 let that = other.freq(**c);
-                distance += (this-that).abs();
-                char_count += 1;
+                let delta = (this-that).abs();
+//                println!("JB - dist {} => {}", **c, delta);
+                distance += delta;
             }
-            println!("JB - rawdist {} char_count {}", distance, char_count);
-            distance / char_count as f64
+//            println!("JB - rawdist {}", distance);
+            distance
         }
     }
 
@@ -192,6 +223,16 @@ pub mod convert {
 
     use itertools::Itertools;
     use base64;
+
+    pub fn b2s(buf: &[u8]) -> String {
+        match String::from_utf8(buf.to_vec()) {
+            Ok(s) => s,
+            Err(err) => panic!("Can't decode bytes as utf8: {:?}: {}", buf, err),
+        }
+    }
+    pub fn s2b(s: &str) -> Vec<u8> {
+        s.bytes().collect()
+    }
 
     pub fn hex2bytes(hex_str: &str) -> Result<Vec<u8>, String> {
         // Get iterator of nibbles-or-errors
