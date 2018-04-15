@@ -8,17 +8,23 @@ pub mod set1 {
     use std::f64;
 
     pub fn challenge3() {
-        let msg = convert::hex2bytes("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap();
+        let cipher_text = convert::hex2bytes("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap();
 //        let k = 65;
 //        let buf = util::xor(k, &msg);
 //        println!("buf is {:?}", buf);
 
+        let (min_dist_k, _) = break_single_byte_xor(&cipher_text);
+        let plain_text = util::xor(min_dist_k, &cipher_text);
+        println!("S1 C3 msg is: {}", convert::b2s(&plain_text));
+    }
+
+    fn break_single_byte_xor(cipher_text: &[u8]) -> (u8, f64) {
         let ec = util::english_frequencies();
 
         let mut min_distance = f64::MAX;
         let mut min_dist_k = 0;
         for k in 0..255 {
-            let buf = util::xor(k, &msg);
+            let buf = util::xor(k, cipher_text);
             let cc = util::CharCount::from_bytes(&buf);
             let distance = cc.char_freq().distance(&ec);
             if distance < min_distance {
@@ -27,9 +33,7 @@ pub mod set1 {
             }
 //            println!("JB {} {}: {}", k, distance, convert::b2s(&buf));
         }
-        //println!("{}: min distance from english is: {}", min_dist_k, min_distance);
-        let plaintext = util::xor(min_dist_k, &msg);
-        println!("S1 C3 msg is: {}", convert::b2s(&plaintext));
+        return (min_dist_k, min_distance)
     }
 }
 
