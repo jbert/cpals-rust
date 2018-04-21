@@ -6,6 +6,9 @@ pub mod set1 {
     use convert;
     use util;
 
+    pub fn challenge5() {
+    }
+
     use std::fs::File;
     use std::io::BufReader;
     use std::io::BufRead;
@@ -79,7 +82,14 @@ mod tests {
         use util;
 
         #[test]
-        fn challenge3() {
+        fn challenge6() {
+            let s1 = "this is a test";
+            let s2 = "wokka wokka!!!";
+            assert_eq!(util::hamming_distance(&convert::s2b(s1), &convert::s2b(s2)), 37);
+        }
+
+        #[test]
+        fn challenge5() {
             let plain_text = "Burning 'em, if you ain't quick and nimble
 I go crazy when I hear a cymbal";
             let key = "ICE";
@@ -152,6 +162,10 @@ I go crazy when I hear a cymbal";
 }
 
 pub mod util {
+
+    pub fn hamming_distance(xs: &[u8], ys: &[u8]) -> usize {
+        xs.iter().zip(ys.iter()).map(|(x, y)| (x ^ y).count_ones() as usize).sum()
+    }
 
     pub fn english_score(buf: &[u8]) -> f64 {
         let mut score = 0;
