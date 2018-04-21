@@ -79,14 +79,14 @@ mod tests {
         use util;
 
         #[test]
-        fn challenge1() {
-            let hex_str = "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d";
-
-            let bytes = convert::hex2bytes(&hex_str).expect("Couldn't parse constant as hex");
-            let b64_str = convert::bytes2base64(&bytes);
-            let expected_b64_str = "SSdtIGtpbGxpbmcgeW91ciBicmFpbiBsaWtlIGEgcG9pc29ub3VzIG11c2hyb29t";
-
-            assert_eq!(expected_b64_str, b64_str);
+        fn challenge3() {
+            let plain_text = "Burning 'em, if you ain't quick and nimble
+I go crazy when I hear a cymbal";
+            let key = "ICE";
+            let cipher_text = util::xor_encode(&convert::s2b(key), &convert::s2b(plain_text));
+            let expected_cipher_text_hex = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
+            let expected_cipher_text = convert::hex2bytes(expected_cipher_text_hex).unwrap();
+            assert_eq!(cipher_text, expected_cipher_text);
         }
 
         #[test]
@@ -100,6 +100,17 @@ mod tests {
 
             let expected = convert::hex2bytes("746865206b696420646f6e277420706c6179").unwrap();
             assert_eq!(util::xor_buf(&xs, &ys).unwrap(), expected);
+        }
+
+        #[test]
+        fn challenge1() {
+            let hex_str = "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d";
+
+            let bytes = convert::hex2bytes(&hex_str).expect("Couldn't parse constant as hex");
+            let b64_str = convert::bytes2base64(&bytes);
+            let expected_b64_str = "SSdtIGtpbGxpbmcgeW91ciBicmFpbiBsaWtlIGEgcG9pc29ub3VzIG11c2hyb29t";
+
+            assert_eq!(expected_b64_str, b64_str);
         }
 
         #[test]
@@ -127,8 +138,6 @@ mod tests {
                 ("12345", "42315", 3),
 
                 ("12345", "21435", 2),
-
-                ("abcdef", "a", 15),
             ];
 
             for test_case in test_cases.iter() {
@@ -296,6 +305,11 @@ pub mod util {
             return Err(format!("xor: buf size mismatch: {} != {}", xs.len(), ys.len()))
         }
         Ok(xs.iter().zip(ys.iter()).map(|xy| {xy.0 ^ xy.1}).collect())
+    }
+
+    pub fn xor_encode(key: &[u8], plain_text: &[u8]) -> Vec<u8> {
+        let keystream = key.iter().cycle();
+        plain_text.iter().zip(keystream).map(|(c, k)| c ^ k).collect()
     }
 }
 
