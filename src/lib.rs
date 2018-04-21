@@ -5,13 +5,41 @@ extern crate base64;
 pub mod set1 {
     use convert;
     use util;
-    use std::f64;
+
+    use std::fs::File;
+    use std::io::BufReader;
+    use std::io::BufRead;
+
+    pub fn challenge4() {
+        let data_file_name = "4.txt";
+        let f = File::open(data_file_name).expect("File  not found");
+        let reader = BufReader::new(f);
+
+        let mut max_score_line_k = 0;
+        let mut max_score = 0.0;
+        let mut max_score_line = Vec::<u8>::new();
+
+        for line_or_err in reader.lines() {
+            let line = line_or_err.expect("Error reading line");
+//            println!("JB read line: {}", line);
+            let line = convert::hex2bytes(&line).unwrap();
+            let (k, max_score_for_this_line) = break_single_byte_xor(&line);
+//            let plain_text = util::xor(k, &line);
+//            println!("JB {}: {}", max_score_for_this_line, convert::b2s(&plain_text));
+            if max_score_for_this_line > max_score {
+                max_score = max_score_for_this_line;
+                max_score_line = line;
+                max_score_line_k = k;
+            }
+        }
+
+//        println!("JB max_score {} min_k {} min_line {}", max_score, max_score_line_k, convert::b2s(&max_score_line));
+        let plain_text = util::xor(max_score_line_k, &max_score_line);
+        println!("S1 C4 msg is: {}", convert::b2s(&plain_text));
+    }
 
     pub fn challenge3() {
         let cipher_text = convert::hex2bytes("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736").unwrap();
-//        let k = 65;
-//        let buf = util::xor(k, &msg);
-//        println!("buf is {:?}", buf);
 
         let (min_dist_k, _) = break_single_byte_xor(&cipher_text);
         let plain_text = util::xor(min_dist_k, &cipher_text);
@@ -19,21 +47,28 @@ pub mod set1 {
     }
 
     fn break_single_byte_xor(cipher_text: &[u8]) -> (u8, f64) {
-        let ec = util::english_frequencies();
+//        let ec = util::english_frequencies();
 
-        let mut min_distance = f64::MAX;
-        let mut min_dist_k = 0;
+        let mut max_score = 0.0;
+        let mut max_score_k = 0;
         for k in 0..255 {
             let buf = util::xor(k, cipher_text);
-            let cc = util::CharCount::from_bytes(&buf);
-            let distance = cc.char_freq().distance(&ec);
+            let score = util::english_score(&buf);
+            if score > max_score {
+                max_score_k = k;
+                max_score = score;
+            }
+            /*
+            let distance = cc.distance(&ec);
             if distance < min_distance {
                 min_dist_k = k;
                 min_distance = distance;
             }
+            */
 //            println!("JB {} {}: {}", k, distance, convert::b2s(&buf));
         }
-        return (min_dist_k, min_distance)
+        return (max_score_k, max_score)
+//        return (min_dist_k, min_distance)
     }
 }
 
@@ -68,42 +103,40 @@ mod tests {
         }
 
         #[test]
-        fn char_frequency() {
-            struct TestCase {
-                in_str: &'static[u8],
-                reference: util::CharFreq,
-                distance: f64
-            }
-            
+        fn order_freq() {
             let test_cases = [
-                TestCase{in_str: b"foo", reference: util::CharFreq(hashmap!{'f' => 1.0/3.0, 'o'=>2.0/3.0}), distance: 0.0},
-                TestCase{in_str: b"a", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 2.0},
-                TestCase{in_str: b"ab", reference: util::CharFreq(hashmap!{'b' => 1.0}), distance: 1.0},
+                ("foo", "of"),
+                ("aaabcde", "abcde"),       // equal freqencies match in lexo order
+                ("Hello", "leho"),
             ];
 
             for test_case in test_cases.iter() {
-                let cc = util::CharCount::from_bytes(test_case.in_str);
-                assert_eq!(test_case.distance, cc.char_freq().distance(&test_case.reference));
+                let (s, expected_order) = *test_case;
+                let order = util::CharFreq::from_bytes(&s.bytes().collect::<Vec<_>>());
+                let order = order.order().iter().collect::<String>();
+                assert_eq!(order, expected_order);
             }
         }
 
         #[test]
-        fn char_count() {
+        fn order_distance() {
             let test_cases = [
-                ("foo", "foo", 0.0),
-                ("foo", "oof", 0.0),
-                ("foo", "foofoo", 0.0),
-                ("foo", "foofoofoo", 0.0),
-                ("a", "b", 2.0),
-                ("aa", "bb", 2.0),
-                ("a", "bc", 2.0),
+                ("12345", "12345", 0),
+                ("12345", "21345", 1),
+                ("12345", "32145", 2),
+                ("12345", "42315", 3),
+
+                ("12345", "21435", 2),
+
+                ("abcdef", "a", 15),
             ];
 
             for test_case in test_cases.iter() {
-                let (x, y, distance) = *test_case;
-                let xc = util::CharCount::from_bytes(&convert::s2b(x));
-                let yc = util::CharCount::from_bytes(&convert::s2b(y));
-                assert_eq!(distance, xc.char_freq().distance(&yc.char_freq()));
+                let (x, y, expected_distance) = *test_case;
+                let mut xs: Vec<char> = x.chars().collect();
+                let mut ys: Vec<char> = y.chars().collect();
+                let distance = util::order_distance(&mut xs, &mut ys);
+                assert_eq!(distance, expected_distance);
             }
         }
     }
@@ -111,9 +144,33 @@ mod tests {
 
 pub mod util {
 
-    use std::collections::HashMap;
-    use std::collections::HashSet;
+    pub fn english_score(buf: &[u8]) -> f64 {
+        let mut score = 0;
+        let tier1 = "etaoin";
+        let tier2 = "shrdlu";
 
+        for b in buf {
+            let c = *b as char;
+            let c = c.to_lowercase().next().unwrap();       // We are only handling ascii
+            if c.is_alphabetic() {
+                score += 1;
+                if let Some(_) = tier1.find(c) {
+                    score += 2;
+                }
+                else if let Some(_) = tier2.find(c) {
+                    score += 1;
+                }
+            }
+            else if c == ' ' {
+                score += 3;
+            }
+        }
+        score as f64 / buf.len() as f64
+    }
+
+    use std::collections::HashMap;
+
+    #[derive(Debug)]
     pub struct CharFreq(pub HashMap<char,f64>);
 
     impl CharFreq {
@@ -125,33 +182,10 @@ pub mod util {
             }
         }
 
-        pub fn distance(&self, other: &CharFreq) -> f64 {
-            let key_set: HashSet<&char> = self.0.keys().collect();
-            let other_set: HashSet<&char> = other.0.keys().collect();
-
-            let mut distance: f64 = 0.0;
-            for c in key_set.union(&other_set) {
-                let this = self.freq(**c);
-                let that = other.freq(**c);
-                let delta = (this-that).abs();
-//                println!("JB - dist {} => {}", **c, delta);
-                distance += delta;
-            }
-//            println!("JB - rawdist {}", distance);
-            distance
-        }
-    }
-
-    pub struct CharCount {
-        total: usize,
-        counts: HashMap<char,usize>,
-    }
-
-    impl CharCount {
-        pub fn from_bytes(buf: &[u8]) -> CharCount {
-            let mut cf = CharCount{total: 0, counts: HashMap::new()};
+        pub fn from_bytes(buf: &[u8]) -> CharFreq {
+            let mut cf = CharFreq(HashMap::new());
             cf.add_bytes(buf);
-            cf
+            cf.normalise()
         }
 
         fn add_bytes(&mut self, buf: &[u8]) {
@@ -164,19 +198,59 @@ pub mod util {
             self.add_char(b as char);
         }
 
-        fn add_char(&mut self, c: char) {
-            self.total += 1;
-            let counter = self.counts.entry(c).or_insert(0);
-            *counter += 1;
-        }
-        
-        pub fn char_freq(&self) -> CharFreq {
-            let m: HashMap<char, f64> = self.counts.iter().map(|(k, v)| {
-                (*k, *v as f64 / self.total as f64)
-            }).collect();
-            CharFreq(m)
+        fn add_char(&mut self, mut c: char) {
+            if ! ((c.is_alphabetic() && c.is_ascii()) || c == ' ') {
+                return
+            }
+            c = c.to_lowercase().next().unwrap();       // We are only handling ascii
+            let counter = self.0.entry(c).or_insert(0.0);
+            *counter += 1.0;
         }
 
+        pub fn order(&self) -> Vec<char> {
+            let mut chars = self.0.keys().map(|c| *c).collect::<Vec<_>>();
+            // Don't mind my NaN
+            // HashMap starts in random order, so make deterministic by falling back
+            // to comparing the chars if the frequecies are the same
+            chars.sort_by(|a, b| self.freq(*b).partial_cmp(&self.freq(*a)).unwrap().then(a.cmp(b)));
+            chars
+        }
+
+        pub fn distance(&self, other: &CharFreq) -> usize {
+            let d = order_distance(&mut self.order(), &mut other.order());
+//            println!("JB - distance ({}) between [{}] and [{}]", d, self.order().iter().collect::<String>(), other.order().iter().collect::<String>());
+            d
+        }
+
+        pub fn normalise(&self) -> CharFreq {
+            let total: f64 = self.0.values().sum();
+            CharFreq(self.0.iter().map(|(k, v)| { (*k, *v / total) } ).collect())
+        }
+    }
+
+    use std;
+
+    pub fn order_distance<T: std::cmp::Eq>(xs: &mut Vec<T>, ys: &mut Vec<T>) -> usize {
+        // Always have shortest first
+        if xs.len() > ys.len() {
+            return order_distance(ys, xs);
+        }
+        // If we run out of chars, penalise 
+        if xs.len() == 0 {
+//            return ys.len() * ys.len() * ys.len() * ys.len()
+            return ys.len() * ys.len()
+        }
+        let x = xs.remove(0);
+        let pos = ys.iter().position(|c| *c == x);
+        let this_distance = match pos {
+            Some(d) => {
+                ys.swap(0, d);
+                ys.remove(0);
+                d
+            }
+            None => ys.len()
+        };
+        this_distance + order_distance(xs, ys)
     }
 
     // Ladies and gentlemen - your friend and mine - Etaoin Shrdlu
@@ -208,7 +282,9 @@ pub mod util {
             'x' => 0.150,
             'y' => 1.974,
             'z' => 0.074,
-            ))
+            ' ' => 25.0,
+//            '\0' => 0.0,  // Other
+            )).normalise()
     }
 
     pub fn xor(x: u8, ys: &[u8]) -> Vec<u8> {
@@ -231,7 +307,7 @@ pub mod convert {
     pub fn b2s(buf: &[u8]) -> String {
         match String::from_utf8(buf.to_vec()) {
             Ok(s) => s,
-            Err(err) => panic!("Can't decode bytes as utf8: {:?}: {}", buf, err),
+            Err(err) => format!("Can't decode bytes as utf8: {:?}: {}", buf, err),
         }
     }
     pub fn s2b(s: &str) -> Vec<u8> {
