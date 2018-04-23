@@ -1,3 +1,4 @@
+#![feature(iterator_step_by)]
 extern crate itertools;
 extern crate base64;
 #[macro_use] extern crate maplit;
@@ -5,11 +6,43 @@ extern crate base64;
 pub mod set1 {
     use convert;
     use util;
+    use std::fs::File;
+    use std::io::Read;
 
     pub fn challenge5() {
+        let mut contents = String::new();
+        let mut f = File::open("6.txt").expect("Can't open file");
+        f.read_to_string(&mut contents).expect("Can't read bytes");
+        let contents = contents.replace("\n", "");
+        let cipher_text = convert::base642bytes(&convert::s2b(&contents)).expect("Data is not base64");
+
+        let max_keysize_checked = 40;
+        let key_size = (2..max_keysize_checked)
+            .map(|key_size| {
+                //            let cipher_it = cipher_text.iter();
+                //            let xbuf = cipher_it.take(key_size).collect();
+                //            let ybuf = cipher_it.take(key_size).collect();
+                let xbuf = &cipher_text[0..key_size];
+                let ybuf = &cipher_text[key_size..key_size*2];
+                // Can't use f64 as non-ordered. Grrrr rust. Give me a built-in
+                // type which panics if NaN or Inf and has a total order. (ordered_float crate)
+                (key_size, util::hamming_distance(xbuf, ybuf) * max_keysize_checked / key_size)
+            })
+            .min_by_key(|&(_, hamm_dist)| hamm_dist)
+            .map(|(ks, _)| ks).expect("Can't be empty");
+
+        println!("key_size is {}", key_size);
+        let blocks = (0..key_size).map(|offset| cipher_text.iter().take(offset).step_by(key_size));
+        let key = blocks.map(|block_it| {
+            let buf = block_it.map(|r| *r).collect::<Vec<_>>();
+            let (k, _) = break_single_byte_xor(&buf);
+            k
+        }).collect::<Vec<_>>();
+        let plain_text = util::xor_decode(&key, &cipher_text);
+        println!("key is:\n {:?}", key);
+        println!("S1 C5 msg is:\n{}", convert::b2s(&plain_text));
     }
 
-    use std::fs::File;
     use std::io::BufReader;
     use std::io::BufRead;
 
@@ -93,7 +126,7 @@ mod tests {
             let plain_text = "Burning 'em, if you ain't quick and nimble
 I go crazy when I hear a cymbal";
             let key = "ICE";
-            let cipher_text = util::xor_encode(&convert::s2b(key), &convert::s2b(plain_text));
+            let cipher_text = util::xor_decode(&convert::s2b(key), &convert::s2b(plain_text));
             let expected_cipher_text_hex = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
             let expected_cipher_text = convert::hex2bytes(expected_cipher_text_hex).unwrap();
             assert_eq!(cipher_text, expected_cipher_text);
@@ -157,6 +190,28 @@ I go crazy when I hear a cymbal";
                 let distance = util::order_distance(&mut xs, &mut ys);
                 assert_eq!(distance, expected_distance);
             }
+        }
+
+        #[test]
+        fn xor_decode() {
+            let test_cases = [
+                ("00000000", "0102", "01020102"),
+                ("00000000", "01", "01010101"),
+                ("00000000", "010203", "01020301"),
+                ("040504050405", "0405", "000000000000"),
+
+                ("303132333435", "0102", "313333313537"),
+            ];
+
+            for test_case in test_cases.iter() {
+                let (plain_text_hex, key_hex, expected_cipher_text_hex) = *test_case;
+                let plain_text = convert::hex2bytes(&plain_text_hex).expect("Test is wrong");
+                let expected_cipher_text = convert::hex2bytes(&expected_cipher_text_hex).expect("Test is wrong");
+                let key = convert::hex2bytes(&key_hex).expect("Test is wrong");
+                let cipher_text = util::xor_decode(&key, &plain_text);
+                assert_eq!(cipher_text, expected_cipher_text);
+            }
+
         }
     }
 }
@@ -321,7 +376,7 @@ pub mod util {
         Ok(xs.iter().zip(ys.iter()).map(|xy| {xy.0 ^ xy.1}).collect())
     }
 
-    pub fn xor_encode(key: &[u8], plain_text: &[u8]) -> Vec<u8> {
+    pub fn xor_decode(key: &[u8], plain_text: &[u8]) -> Vec<u8> {
         let keystream = key.iter().cycle();
         plain_text.iter().zip(keystream).map(|(c, k)| c ^ k).collect()
     }
@@ -352,6 +407,10 @@ pub mod convert {
                     Some(y) => Some((x, y)),
                 }
             }}).map(hilo2byte).collect()
+    }
+
+    pub fn base642bytes(b64str: &[u8]) -> Result<Vec<u8>, String> {
+        base64::decode(b64str).map_err(|e| e.to_string())
     }
 
     pub fn bytes2base64(bytes: &[u8]) -> String {
