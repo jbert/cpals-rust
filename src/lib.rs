@@ -6,15 +6,14 @@ extern crate base64;
 pub mod set1 {
     use convert;
     use util;
-    use std::fs::File;
-    use std::io::Read;
+
+    pub fn challenge7() {
+        let key = "YELLOW SUBMARINE";
+        let cipher_text= util::slurp_base64_file("7.txt");
+    }
 
     pub fn challenge6() {
-        let mut contents = String::new();
-        let mut f = File::open("6.txt").expect("Can't open file");
-        f.read_to_string(&mut contents).expect("Can't read bytes");
-        let contents = contents.replace("\n", "");
-        let cipher_text = convert::base642bytes(&convert::s2b(&contents)).expect("Data is not base64");
+        let cipher_text = util::slurp_base64_file("6.txt");
 
         let max_keysize_to_try = 40;
         let num_keysizes_to_return = 5;
@@ -86,6 +85,7 @@ pub mod set1 {
 
     use std::io::BufReader;
     use std::io::BufRead;
+    use std::fs::File;
 
     pub fn challenge4() {
         let data_file_name = "4.txt";
@@ -273,6 +273,19 @@ I go crazy when I hear a cymbal";
 }
 
 pub mod util {
+
+    use std::fs::File;
+    use std::io::Read;
+    use convert;
+
+    pub fn slurp_base64_file(filename: &str) -> Vec<u8> {
+        let mut contents = String::new();
+        let mut f = File::open(filename).expect("Can't open file");
+        f.read_to_string(&mut contents).expect("Can't read bytes");
+        let contents = contents.replace("\n", "");
+        let contents = convert::base642bytes(&convert::s2b(&contents)).expect("Data is not base64");
+        contents
+    }
 
     pub fn hamming_distance(xs: &[u8], ys: &[u8]) -> usize {
         xs.iter().zip(ys.iter()).map(|(x, y)| (x ^ y).count_ones() as usize).sum()
