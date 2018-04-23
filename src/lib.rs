@@ -9,30 +9,26 @@ pub mod set1 {
     use std::fs::File;
     use std::io::Read;
 
-    pub fn challenge5() {
+    pub fn challenge6() {
         let mut contents = String::new();
         let mut f = File::open("6.txt").expect("Can't open file");
         f.read_to_string(&mut contents).expect("Can't read bytes");
         let contents = contents.replace("\n", "");
         let cipher_text = convert::base642bytes(&convert::s2b(&contents)).expect("Data is not base64");
 
-        let max_keysize_checked = 40;
-        let key_size = (2..max_keysize_checked)
-            .map(|key_size| {
-                //            let cipher_it = cipher_text.iter();
-                //            let xbuf = cipher_it.take(key_size).collect();
-                //            let ybuf = cipher_it.take(key_size).collect();
-                let xbuf = &cipher_text[0..key_size];
-                let ybuf = &cipher_text[key_size..key_size*2];
-                // Can't use f64 as non-ordered. Grrrr rust. Give me a built-in
-                // type which panics if NaN or Inf and has a total order. (ordered_float crate)
-                (key_size, util::hamming_distance(xbuf, ybuf) * max_keysize_checked / key_size)
-            })
-            .min_by_key(|&(_, hamm_dist)| hamm_dist)
-            .map(|(ks, _)| ks).expect("Can't be empty");
+        let max_keysize_to_try = 40;
+        let num_keysizes_to_return = 5;
+        let keysizes = guess_repeated_xor_keysize(max_keysize_to_try, num_keysizes_to_return, &cipher_text);
 
-        println!("key_size is {}", key_size);
-        let blocks = (0..key_size).map(|offset| cipher_text.iter().take(offset).step_by(key_size));
+//        println!("keysizes {:?}", keysizes);
+        
+        let mut guesses = keysizes.iter().map(|&ks| break_repeated_xor(ks, &cipher_text))
+            .collect::<Vec<_>>();
+        guesses.sort_by(|&(score_a, _), &(score_b, _)| score_b.partial_cmp(&score_a).expect("Not a nan"));
+//        println!("score {} guess\n{}\n", guesses[0].0, convert::b2s(&guesses[0].1));
+//        use below to turn 'keysize' -> key -> plaintext -> english_score and choose min
+        /*
+        let blocks = (0..keysize).map(|offset| cipher_text.iter().take(offset).step_by(keysize));
         let key = blocks.map(|block_it| {
             let buf = block_it.map(|r| *r).collect::<Vec<_>>();
             let (k, _) = break_single_byte_xor(&buf);
@@ -40,7 +36,52 @@ pub mod set1 {
         }).collect::<Vec<_>>();
         let plain_text = util::xor_decode(&key, &cipher_text);
         println!("key is:\n {:?}", key);
-        println!("S1 C5 msg is:\n{}", convert::b2s(&plain_text));
+        */
+        println!("S1 C6 msg is:\n{}", convert::b2s(&guesses[0].1));
+    }
+
+    pub fn break_repeated_xor(keysize: usize, cipher_text: &[u8]) -> (f64, Vec<u8>) {
+        // For each transposed block, find the best key byte for english
+        let blocks = transpose_blocks(keysize, cipher_text);
+        let key = blocks.iter().map(|block| {
+//            println!("buf len is {}", block.len());
+//            println!("beginning of buf is {:?}", &block[0..10]);
+            let (k, _) = break_single_byte_xor(&block);
+//            println!("key byte is {:?}", k);
+            k
+        }).collect::<Vec<_>>();
+
+        // We now have a multibyte key.
+        // Use it to find plaintext and english score
+        let plain_text = util::xor_decode(&key, &cipher_text);
+//        println!("key is: {}", convert::b2s(&key));
+        let score = util::english_score(true, &plain_text);
+//        println!("JB BRX ks {} score {}", keysize, score);
+        (score, plain_text)
+    }
+
+    fn transpose_blocks(blocksize: usize, buf: &[u8]) -> Vec<Vec<u8>> {
+        // Transpose - get an iter to all the first bytes of the ciphertext block, all the 2nd etc
+        // (using keysize as blocksize)
+        (0..blocksize)
+            .map(|offset| buf.iter().skip(offset).step_by(blocksize))
+            .map(|block_iter| block_iter.map(|&r| r).collect::<Vec<_>>())
+            .collect()
+    }
+
+    pub fn guess_repeated_xor_keysize(max_keysize_checked: usize, num_keysizes_to_return: usize, cipher_text: &[u8]) -> Vec<usize> {
+        let mut hd_keysizes = (2..max_keysize_checked)
+            .map(|keysize| {
+                // Look at the distances between the first block and the next few
+                let abuf = &cipher_text[0..keysize];
+                let bbuf = &cipher_text[keysize..keysize*2];
+                let cbuf = &cipher_text[keysize*2..keysize*3];
+                let dbuf = &cipher_text[keysize*3..keysize*4];
+                let hd = (util::hamming_distance(abuf, bbuf) + util::hamming_distance(bbuf, cbuf) + util::hamming_distance(cbuf, dbuf)) / 3;
+                (keysize, hd as f64 / keysize as f64)
+            }).collect::<Vec<_>>();
+        hd_keysizes.sort_by(|&(_, hd_a), &(_, hd_b)| hd_a.partial_cmp(&hd_b).expect("Not a nan"));
+        hd_keysizes.iter().take(num_keysizes_to_return).map(|&(ks, _)| ks).collect()
     }
 
     use std::io::BufReader;
@@ -89,7 +130,7 @@ pub mod set1 {
         let mut max_score_k = 0;
         for k in 0..255 {
             let buf = util::xor(k, cipher_text);
-            let score = util::english_score(&buf);
+            let score = util::english_score(true, &buf);
             if score > max_score {
                 max_score_k = k;
                 max_score = score;
@@ -119,6 +160,21 @@ mod tests {
             let s1 = "this is a test";
             let s2 = "wokka wokka!!!";
             assert_eq!(util::hamming_distance(&convert::s2b(s1), &convert::s2b(s2)), 37);
+        }
+
+        #[test]
+        fn hamming_distance() {
+            let test_cases = [
+                ("000000", "000001", 1),
+                ("000000", "000003", 2),
+            ];
+
+            for test_case in test_cases.iter() {
+                let (x_hex, y_hex, expected_hd) = *test_case;
+                let x = convert::hex2bytes(&x_hex).expect("Test is wrong");
+                let y = convert::hex2bytes(&y_hex).expect("Test is wrong");
+                assert_eq!(util::hamming_distance(&x, &y), expected_hd);
+            }
         }
 
         #[test]
@@ -211,8 +267,8 @@ I go crazy when I hear a cymbal";
                 let cipher_text = util::xor_decode(&key, &plain_text);
                 assert_eq!(cipher_text, expected_cipher_text);
             }
-
         }
+
     }
 }
 
@@ -222,7 +278,7 @@ pub mod util {
         xs.iter().zip(ys.iter()).map(|(x, y)| (x ^ y).count_ones() as usize).sum()
     }
 
-    pub fn english_score(buf: &[u8]) -> f64 {
+    pub fn english_score_counting_method(buf: &[u8]) -> f64 {
         let mut score = 0;
         let tier1 = "etaoin";
         let tier2 = "shrdlu";
@@ -247,6 +303,26 @@ pub mod util {
     }
 
     use std::collections::HashMap;
+    use std::f64;
+
+    pub fn english_score_histo_order(buf: &[u8]) -> f64 {
+        let ec = english_frequencies();
+        let cc = CharFreq::from_bytes(&buf);
+        let distance = cc.distance(&ec);
+        if distance == 0 {
+            f64::MAX
+        } else {
+            1.0 / distance as f64
+        }
+    }
+
+    pub fn english_score(fast: bool, buf: &[u8]) -> f64 {
+        if fast {
+            english_score_counting_method(buf)
+        } else {
+            english_score_histo_order(buf)
+        }
+    }
 
     #[derive(Debug)]
     pub struct CharFreq(pub HashMap<char,f64>);
