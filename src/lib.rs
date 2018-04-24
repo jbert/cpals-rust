@@ -167,6 +167,32 @@ pub mod set1 {
 
 #[cfg(test)]
 mod tests {
+    mod set2 {
+        use util;
+        use convert;
+
+        #[test]
+        fn challenge9() {
+            let block_size = 20;
+            let test_cases = [
+                ("YELLOW SUBMARINE", "YELLOW SUBMARINE\x04\x04\x04\x04"),
+                ("YELLOW SUBMARINE1234", "YELLOW SUBMARINE1234"),
+                ("YELLOW SUBMARINE1234YELLOW SUBMARINE", "YELLOW SUBMARINE1234YELLOW SUBMARINE\x04\x04\x04\x04"),
+                ("YELLOW SUBMARINE123", "YELLOW SUBMARINE123\x01"),
+                ("YELLOW SUBMARINE12", "YELLOW SUBMARINE12\x02\x02"),
+                ("YELLOW SUBMARINE1", "YELLOW SUBMARINE1\x03\x03\x03"),
+            ];
+
+            for test_case in test_cases.iter() {
+                let (msg_str, expected_padded_msg_str) = *test_case;
+                let msg = convert::s2b(&msg_str);
+                let expected_padded_msg = convert::s2b(&expected_padded_msg_str);
+                let padded_msg = util::pkcs7_pad(block_size, &msg);
+                assert_eq!(padded_msg, expected_padded_msg);
+            }
+        }
+    }
+
     mod set1 {
         use convert;
         use util;
@@ -295,6 +321,18 @@ pub mod util {
     use std::io::BufReader;
     use std::io::BufRead;
     use convert;
+
+    pub fn pkcs7_pad(block_size: usize, buf: &[u8]) -> Vec<u8> {
+        let mut padding_needed = block_size - buf.len() % block_size;
+        if padding_needed == block_size {
+            padding_needed = 0;
+        }
+        let padding_needed = padding_needed as u8;
+        let mut v = buf.to_vec();
+        v.extend((0..padding_needed).map(|_| padding_needed));
+        v
+    }
+
 
     pub fn slurp_base64_file(filename: &str) -> Vec<u8> {
         let mut contents = String::new();
