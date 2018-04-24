@@ -7,3 +7,4 @@ authors = ["John Berthels <john.berthels@gmail.com>"]
 itertools="*"
 base64="*"
 maplit="*"
+openssl="*"

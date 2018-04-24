@@ -1,15 +1,26 @@
 #![feature(iterator_step_by)]
 extern crate itertools;
 extern crate base64;
+extern crate openssl;
 #[macro_use] extern crate maplit;
 
 pub mod set1 {
     use convert;
     use util;
+    use openssl::symm;
 
     pub fn challenge7() {
-        let key = "YELLOW SUBMARINE";
+        let key = convert::s2b(&"YELLOW SUBMARINE");
         let cipher_text= util::slurp_base64_file("7.txt");
+
+        let cipher = symm::Cipher::aes_128_ecb();
+        let iv = convert::s2b(&"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+        match symm::decrypt(cipher, &key, Some(&iv), &cipher_text) {
+            Err(error_stack)
+                => println!("Failed to decrypt: {}", error_stack),
+            Ok(plain_text)
+                => println!("S1 C7 msg is {}", convert::b2s(&plain_text)),
+        }
     }
 
     pub fn challenge6() {
