@@ -9,6 +9,13 @@ pub mod set1 {
     use util;
     use openssl::symm;
 
+    pub fn challenge8() {
+        let lines = util::slurp_hex_file_as_lines("8.txt");
+        for line in lines.iter() {
+            println!("line len {}", line.len()) ;
+        }
+    }
+
     pub fn challenge7() {
         let key = convert::s2b(&"YELLOW SUBMARINE");
         let cipher_text= util::slurp_base64_file("7.txt");
@@ -94,23 +101,14 @@ pub mod set1 {
         hd_keysizes.iter().take(num_keysizes_to_return).map(|&(ks, _)| ks).collect()
     }
 
-    use std::io::BufReader;
-    use std::io::BufRead;
-    use std::fs::File;
-
     pub fn challenge4() {
-        let data_file_name = "4.txt";
-        let f = File::open(data_file_name).expect("File  not found");
-        let reader = BufReader::new(f);
+        let lines = util::slurp_hex_file_as_lines("4.txt");
 
         let mut max_score_line_k = 0;
         let mut max_score = 0.0;
-        let mut max_score_line = Vec::<u8>::new();
+        let mut max_score_line = &Vec::<u8>::new();
 
-        for line_or_err in reader.lines() {
-            let line = line_or_err.expect("Error reading line");
-//            println!("JB read line: {}", line);
-            let line = convert::hex2bytes(&line).unwrap();
+        for line in lines.iter() {
             let (k, max_score_for_this_line) = break_single_byte_xor(&line);
 //            let plain_text = util::xor(k, &line);
 //            println!("JB {}: {}", max_score_for_this_line, convert::b2s(&plain_text));
@@ -287,6 +285,8 @@ pub mod util {
 
     use std::fs::File;
     use std::io::Read;
+    use std::io::BufReader;
+    use std::io::BufRead;
     use convert;
 
     pub fn slurp_base64_file(filename: &str) -> Vec<u8> {
@@ -296,6 +296,17 @@ pub mod util {
         let contents = contents.replace("\n", "");
         let contents = convert::base642bytes(&convert::s2b(&contents)).expect("Data is not base64");
         contents
+    }
+
+    pub fn slurp_hex_file_as_lines(filename: &str) -> Vec<Vec<u8>> {
+        let f = File::open(filename).expect("File  not found");
+        let reader = BufReader::new(f);
+
+        reader
+            .lines()
+            .map(|l| l.expect("Error reading line"))
+            .map(|l| convert::hex2bytes(&l).unwrap())
+            .collect()
     }
 
     pub fn hamming_distance(xs: &[u8], ys: &[u8]) -> usize {
