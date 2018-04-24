@@ -8,11 +8,18 @@ pub mod set1 {
     use convert;
     use util;
     use openssl::symm;
+    use std::collections::HashSet;
 
     pub fn challenge8() {
         let lines = util::slurp_hex_file_as_lines("8.txt");
-        for line in lines.iter() {
-            println!("line len {}", line.len()) ;
+        let block_size = 16;
+        for (lineno, line) in lines.iter().enumerate() {
+            let num_blocks = line.len() / block_size;
+            let mut blocks = line.chunks(block_size);
+            let distinct_blocks = blocks.collect::<HashSet<_>>();
+            if distinct_blocks.len() != num_blocks {
+                println!("s1 c8: Line {} has only {} distinct blocks, not {}", lineno, distinct_blocks.len(), num_blocks);
+            }
         }
     }
 
