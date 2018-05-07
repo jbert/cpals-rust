@@ -294,24 +294,6 @@ mod tests {
         use set2::*;
 
         #[test]
-        fn test_cbc_mode() {
-            let test_cases = [
-//                "\x00".repeat(16),
-                "CBC mode is a block cipher mode that allows us to encrypt irregularly-sized messages, despite the fact that a block cipher natively only transforms individual blocks.",
-                "yellow submarine",
-            ];
-
-            let key = s2b("YELLOW SUBMARINE");
-            let iv = s2b(&"\x7f".repeat(16));
-
-            for test_case in test_cases.iter() {
-                let cipher_text = &aes128_cbc_encode(&key, &iv, &s2b(test_case));
-                let re_plain_text = &aes128_cbc_decode(&key, &iv, &cipher_text);
-                assert_eq!(&b2s(re_plain_text), test_case);
-            }
-        }
-
-        #[test]
         fn challenge9() {
             let block_size = 20;
             let test_cases = [
