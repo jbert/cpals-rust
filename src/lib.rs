@@ -10,14 +10,14 @@ pub mod set2 {
     use set1::*;
 
     pub fn challenge10() {
-        let cipher_text= slurp_base64_file("7.txt");
+        let cipher_text= slurp_base64_file("10.txt");
         println!("JB - cipher length is {}", cipher_text.len());
         let iv = &s2b(&"\x00".repeat(16));
         let key = &s2b("YELLOW SUBMARINE");
         let plain_text = aes128_cbc_decode(&key, &iv, &cipher_text);
-        for (i, byte) in plain_text[0..34].iter().enumerate() {
-            println!("JB {:2} {:08b} {}", i, *byte, *byte as char);
-        }
+//        for (i, byte) in plain_text[0..34].iter().enumerate() {
+//            println!("JB {:2} {:08b} {}", i, *byte, *byte as char);
+//        }
         println!("S1C10 msg is {}", &b2s(&plain_text));
         let recipher_text = aes128_cbc_encode(&key, &iv, &plain_text);
         println!("Re-encode matches? : {}", recipher_text == cipher_text);
@@ -100,16 +100,19 @@ pub mod set1 {
     }
 
     pub fn aes128_ecb_encode(key: &[u8], plain_text: &[u8]) -> Vec<u8> {
-        aes128_ecb_helper(key, plain_text).expect("Failed to encrypt")
+        aes128_ecb_helper(true, key, plain_text)
     }
 
-    fn aes128_ecb_helper(key: &[u8], plain_text: &[u8]) -> Result<Vec<u8>, String> {
-        let cipher = symm::Cipher::aes_128_ecb();
-        let iv = s2b(&"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
-        match symm::encrypt(cipher, &key, Some(&iv), &plain_text) {
-            Ok(buf) => Ok(buf),
-            Err(stack) => Err(format!("{:?}", stack)),
-        }
+    pub fn aes128_ecb_decode(key: &[u8], cipher_text: &[u8]) -> Vec<u8> {
+        aes128_ecb_helper(false, key, cipher_text)
+    }
+
+    fn aes128_ecb_helper(encode: bool, key: &[u8], in_text: &[u8]) -> Vec<u8> {
+        // TODO: pkcs padding
+        let block_size = 16;
+        in_text.chunks(block_size).map(|in_block| {
+            aes128_crypt_block(encode, &key, &in_block)
+        }).collect::<Vec<_>>().concat()
     }
 
     pub fn aes128_crypt_block(encode: bool, key: &[u8], in_text: &[u8]) -> Vec<u8> {
@@ -145,18 +148,6 @@ pub mod set1 {
         Ok(out_text)
     }
 
-
-    pub fn aes128_ecb_decode(key: &[u8], cipher_text: &[u8]) -> Vec<u8> {
-        aes128_ecb_decode_helper(key, cipher_text).expect("Failed to decrypt")
-    }
-    pub fn aes128_ecb_decode_helper(key: &[u8], cipher_text: &[u8]) -> Result<Vec<u8>, String> {
-        let cipher = symm::Cipher::aes_128_ecb();
-        let iv = s2b(&"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
-        match symm::decrypt(cipher, &key, Some(&iv), &cipher_text) {
-            Ok(buf) => Ok(buf),
-            Err(stack) => Err(format!("{:?}", stack)),
-        }
-    }
 
     pub fn challenge6() {
         let cipher_text = slurp_base64_file("6.txt");
@@ -291,7 +282,6 @@ mod tests {
     mod set2 {
         use util::*;
         use convert::*;
-        use set2::*;
 
         #[test]
         fn challenge9() {
@@ -322,11 +312,17 @@ mod tests {
 
         #[test]
         fn test_ecb() {
+            let test_cases = [
+                "cavorting badger",
+                "cavorting badgeryellow submarine",
+            ];
             let key = &s2b("yellow submarine");
-            let plain_text = &s2b("cavorting badger");
-            let cipher_text = &aes128_ecb_encode(&key, &plain_text);
-            let re_plain_text = &aes128_ecb_decode(&key, &cipher_text);
-            assert_eq!(plain_text, re_plain_text, "Get back the text we expect");
+            for test_case in test_cases.iter() {
+                let plain_text = &s2b(test_case);
+                let cipher_text = &aes128_ecb_encode(&key, plain_text);
+                let re_plain_text = &aes128_ecb_decode(&key, &cipher_text);
+                assert_eq!(plain_text, re_plain_text, "Get back the text we expect");
+            }
         }
 
         #[test]
