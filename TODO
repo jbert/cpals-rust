@@ -1,12 +1,4 @@
-DONE - adding .normalise() to char_freq() method changed results, so:
-  - either normalise() is wrong
-  - or the total was wrong
+- rewrite challenge 4 to use a 'max_by_key' over a tuple, instead of a for-loop
 
-DONE - remove CharCount, can simply use char frequencies with a call to normalise
-
-- change distance to:
-  - sort the letters into order
-  - find some distance on ordering
-    - number of swaps to make first N match?
-    - 'earth movers' to make first N match?
-  - re-run without noise chars
+- clean up use of block size
+  - pkg constant for AES128?

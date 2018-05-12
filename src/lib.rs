@@ -33,14 +33,14 @@ pub mod set2 {
         let cipher_blocks = cipher_text.chunks(block_size);
         let plain_blocks = cipher_blocks.map(|cipher_block| {
 //            println!("JB - about to decode key len {} block len {}", key.len(), last_cipher_block.len());
-            println!("JB - decode last cipher block block {:x?}", last_cipher_block);
-            println!("JB - decode this cipher block block {:x?}", cipher_block);
+//            println!("JB - decode last cipher block block {:x?}", last_cipher_block);
+//            println!("JB - decode this cipher block block {:x?}", cipher_block);
             let xor_input_block = aes128_crypt_block(false, &key, &cipher_block);
             let plain_block = xor_buf(&xor_input_block, &last_cipher_block).expect("Block size mismatch!?");
             last_cipher_block = cipher_block.clone().to_vec();
             plain_block
         });
-        plain_blocks.collect::<Vec<_>>().concat()
+        pkcs7_unpad(block_size, &plain_blocks.collect::<Vec<_>>().concat())
     }
 
 
@@ -51,7 +51,8 @@ pub mod set2 {
 
         // CBC consumes previous ciphertext blocks, prepended with the IV
         let mut last_cipher_block = iv.to_vec();
-        let plain_blocks = plain_text.chunks(block_size);
+        let padded_plain_text = pkcs7_pad(block_size, plain_text);
+        let plain_blocks = padded_plain_text.chunks(block_size);
         let cipher_blocks = plain_blocks.map(|plain_block| {
             let ecb_input_block = &xor_buf(&plain_block, &last_cipher_block).expect("Block size mismatch!?");
             let cipher_block = aes128_crypt_block(true, &key, &ecb_input_block);
@@ -100,15 +101,18 @@ pub mod set1 {
     }
 
     pub fn aes128_ecb_encode(key: &[u8], plain_text: &[u8]) -> Vec<u8> {
-        aes128_ecb_helper(true, key, plain_text)
+        let block_size = 16;
+        let padded_plain_text = pkcs7_pad(block_size, plain_text);
+        aes128_ecb_helper(true, key, &padded_plain_text)
     }
 
     pub fn aes128_ecb_decode(key: &[u8], cipher_text: &[u8]) -> Vec<u8> {
-        aes128_ecb_helper(false, key, cipher_text)
+        let block_size = 16;
+        let padded_plain_text = aes128_ecb_helper(false, key, cipher_text);
+        pkcs7_unpad(block_size, &padded_plain_text)
     }
 
     fn aes128_ecb_helper(encode: bool, key: &[u8], in_text: &[u8]) -> Vec<u8> {
-        // TODO: pkcs padding
         let block_size = 16;
         in_text.chunks(block_size).map(|in_block| {
             aes128_crypt_block(encode, &key, &in_block)
@@ -288,11 +292,13 @@ mod tests {
             let block_size = 20;
             let test_cases = [
                 ("YELLOW SUBMARINE", "YELLOW SUBMARINE\x04\x04\x04\x04"),
-                ("YELLOW SUBMARINE1234", "YELLOW SUBMARINE1234"),
+                ("YELLOW SUBMARINE1234", "YELLOW SUBMARINE1234\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14"),
                 ("YELLOW SUBMARINE1234YELLOW SUBMARINE", "YELLOW SUBMARINE1234YELLOW SUBMARINE\x04\x04\x04\x04"),
                 ("YELLOW SUBMARINE123", "YELLOW SUBMARINE123\x01"),
                 ("YELLOW SUBMARINE12", "YELLOW SUBMARINE12\x02\x02"),
                 ("YELLOW SUBMARINE1", "YELLOW SUBMARINE1\x03\x03\x03"),
+                ("Y", "Y\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13\x13"),
+                ("", "\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14\x14"),
             ];
 
             for test_case in test_cases.iter() {
@@ -301,6 +307,9 @@ mod tests {
                 let expected_padded_msg = s2b(&expected_padded_msg_str);
                 let padded_msg = pkcs7_pad(block_size, &msg);
                 assert_eq!(padded_msg, expected_padded_msg);
+                assert!(padded_msg.len() % block_size == 0, "padded msg is a multiple of block size");
+                let unpadded_msg = pkcs7_unpad(block_size, &padded_msg);
+                assert_eq!(unpadded_msg, msg);
             }
         }
     }
@@ -309,19 +318,31 @@ mod tests {
         use convert::*;
         use util::*;
         use set1::*;
+        use set2::*;
 
         #[test]
-        fn test_ecb() {
+        fn test_encrypt_decrypt() {
             let test_cases = [
+                // block size
                 "cavorting badger",
                 "cavorting badgeryellow submarine",
+                // short
+                "a",
+                "",
+                // long
+                "cavorting badger sleeps",
             ];
             let key = &s2b("yellow submarine");
+            let iv = &s2b("badger cavorting");
             for test_case in test_cases.iter() {
                 let plain_text = &s2b(test_case);
-                let cipher_text = &aes128_ecb_encode(&key, plain_text);
-                let re_plain_text = &aes128_ecb_decode(&key, &cipher_text);
-                assert_eq!(plain_text, re_plain_text, "Get back the text we expect");
+                println!("JB test {}", test_case);
+                let ecb_cipher_text = &aes128_ecb_encode(&key, plain_text);
+                let re_ecb_plain_text = &aes128_ecb_decode(&key, &ecb_cipher_text);
+                assert_eq!(plain_text, re_ecb_plain_text, "Get back the text we expect - ecb {}", *test_case);
+                let cbc_cipher_text = &aes128_cbc_encode(&key, iv, plain_text);
+                let re_cbc_plain_text = &aes128_cbc_decode(&key, iv, &cbc_cipher_text);
+                assert_eq!(plain_text, re_cbc_plain_text, "Get back the text we expect - cbc {}", *test_case);
             }
         }
 
@@ -451,14 +472,25 @@ pub mod util {
     use convert::*;
 
     pub fn pkcs7_pad(block_size: usize, buf: &[u8]) -> Vec<u8> {
-        let mut padding_needed = block_size - buf.len() % block_size;
-        if padding_needed == block_size {
-            padding_needed = 0;
-        }
+        assert!(block_size < 256, "PKCS7 won't work for block size of >= 256");
+        // We want a full block if we already match block size
+        let padding_needed = block_size - buf.len() % block_size;
         let padding_needed = padding_needed as u8;
         let mut v = buf.to_vec();
         v.extend((0..padding_needed).map(|_| padding_needed));
         v
+    }
+
+    pub fn pkcs7_unpad(block_size: usize, buf: &[u8]) -> Vec<u8> {
+        let num_blocks = buf.len() / block_size;
+        buf.chunks(block_size).enumerate().map(|(i, chunk)| {
+            if i < num_blocks - 1 {
+                chunk
+            } else {
+                let discard_bytes = *chunk.last().unwrap() as usize;
+                &chunk[0..chunk.len() - discard_bytes]
+            }
+        }).collect::<Vec<_>>().concat()
     }
 
 
