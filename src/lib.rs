@@ -1,13 +1,63 @@
 #![feature(iterator_step_by)]
+#![feature(extern_prelude)]
 extern crate itertools;
 extern crate base64;
 extern crate openssl;
+extern crate rand;
+
 #[macro_use] extern crate maplit;
 
 pub mod set2 {
     use util::*;
     use convert::*;
     use set1::*;
+    use rand::Rng;
+    use std::collections::HashSet;
+
+    pub fn get_random_buf(lo: usize, hi: usize) -> Vec<u8> {
+        let num = rand::thread_rng().gen_range(lo, hi);
+        get_random_bytes(num)
+    }
+
+    pub fn get_random_bytes(n: usize) -> Vec<u8> {
+//        let mut rng = rand::thread_rng();
+//        (0..n).map(|_| rng.gen()).collect()
+        (0..n).map(|_| rand::random::<u8>()).collect()
+    }
+
+    pub fn guess_cryptor_is_ecb(encryptor: &mut FnMut(&[u8]) -> Vec<u8>) -> bool {
+        let block_size = 16;
+        let repeated_plain_text = "a".repeat(block_size * 4);
+        let cipher_text = encryptor(&s2b(&repeated_plain_text));
+
+        has_repeated_blocks(block_size, &cipher_text)
+    }
+
+    fn has_repeated_blocks(block_size: usize, buf: &[u8]) -> bool {
+        let num_blocks = buf.len() / block_size;
+        let blocks = buf.chunks(block_size);
+        let distinct_blocks = blocks.collect::<HashSet<_>>();
+        distinct_blocks.len() != num_blocks
+    }
+
+    pub fn aes128_ecb_or_cbc_random_key(plain_text: &[u8]) -> (Vec<u8>, bool) {
+        let block_size = 16;
+        let key = get_random_bytes(block_size);
+
+        let plain_vec = &mut plain_text.to_vec();
+        let mut extended_plain_text = get_random_buf(5, 10);
+        extended_plain_text.append(plain_vec);
+        extended_plain_text.append(&mut get_random_buf(5, 10));
+
+
+        let use_ecb = rand::random();
+        if use_ecb {
+            (aes128_ecb_encode(&key, &extended_plain_text), use_ecb)
+        } else {
+            let iv = get_random_bytes(block_size);
+            (aes128_cbc_encode(&key, &iv, &extended_plain_text), use_ecb)
+        }
+    }
 
     pub fn challenge10() {
         let cipher_text= slurp_base64_file("10.txt");
@@ -286,6 +336,24 @@ mod tests {
     mod set2 {
         use util::*;
         use convert::*;
+        use set2::*;
+
+        #[test]
+        fn challenge11() {
+            let attempts = 100;
+            for _ in 0..attempts {
+                let mut was_ecb = false;
+                let guess = {
+                    let mut cryptor = |plain_text: &[u8]| {
+                        let (cipher_text, did_ecb) = aes128_ecb_or_cbc_random_key(plain_text);
+                        was_ecb = did_ecb;
+                        cipher_text
+                    };
+                    guess_cryptor_is_ecb(&mut cryptor)
+                };
+                assert_eq!(guess, was_ecb, "Guessed correctly");
+            }
+        }
 
         #[test]
         fn challenge9() {
