@@ -14,6 +14,46 @@ pub mod set2 {
     use rand::Rng;
     use std::collections::HashSet;
 
+    pub fn challenge12() {
+        let key = get_random_bytes(16);
+        let mut c12_cryptor = |pt: &[u8]| {
+            c12_cryptor_helper(&key, pt)
+        };
+
+        let block_size = find_blocksize(&c12_cryptor);
+        println!("S2C12 - cryptor block size is : {}", block_size);
+        let is_ecb = guess_cryptor_is_ecb(&mut c12_cryptor);
+        println!("S2C12 - cryptor is ecb? : {}", is_ecb);
+    }
+
+    fn find_blocksize(cryptor: &Fn(&[u8]) -> Vec<u8>) -> usize {
+        let mut last_cipher_text_size = 0;
+        for plaintext_len in 0..1024 {
+            let cipher_text = cryptor(&s2b(&"a".repeat(plaintext_len)));
+            if last_cipher_text_size > 0 { // Not really necessary...can't we just encode 1 byte and assume PCKS-7?
+                if last_cipher_text_size != cipher_text.len() {
+                    return cipher_text.len() - last_cipher_text_size;
+                }
+            }
+            last_cipher_text_size = cipher_text.len();
+        }
+        panic!("Couldn't find block size");
+    }
+
+
+    pub fn c12_cryptor_helper(key: &[u8], plain_text: &[u8]) -> Vec<u8> {
+        let block_size = 16;
+        assert!(key.len() == block_size, format!("AES128 requires {} byte key", block_size));
+        let suffix = str::replace("Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg
+aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq
+dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg
+YnkK", "\n", "");
+        let suffix = &base642bytes(&s2b(&suffix)).expect("Must be base64!").to_vec();
+
+        plain_text.to_vec().append(&mut suffix.clone());
+        aes128_ecb_encode(&key, &plain_text)
+    }
+
     pub fn get_random_buf(lo: usize, hi: usize) -> Vec<u8> {
         let num = rand::thread_rng().gen_range(lo, hi);
         get_random_bytes(num)
