@@ -13,6 +13,7 @@ pub mod set2 {
     use set1::*;
     use rand::Rng;
     use std::collections::HashSet;
+    use std::iter;
 
     pub fn challenge12() {
         let key = get_random_bytes(16);
@@ -24,6 +25,55 @@ pub mod set2 {
         println!("S2C12 - cryptor block size is : {}", block_size);
         let is_ecb = guess_cryptor_is_ecb(&mut c12_cryptor);
         println!("S2C12 - cryptor is ecb? : {}", is_ecb);
+
+//        let cipher_len = c12_cryptor(&[]).len();
+//        println!("JB - cipher len is {}", cipher_len);
+
+        let mut recovered_plain_text: Vec<u8> = Vec::new();
+        let pad_char = 'A' as u8;
+
+//        for _ in 0..cipher_len {
+        loop {
+//            println!("JB - {}: {}", recovered_plain_text.len(), b2s(&recovered_plain_text));
+
+            // We encrypt a prefix which pads with known data to 1 byte less than a block
+            let added_pad = block_size - ((recovered_plain_text.len()+1) % block_size);
+            let pad: Vec<u8> = iter::repeat(pad_char).take(added_pad).collect();
+
+            let cipher_text = c12_cryptor(&pad);
+
+            let mut chosen_plain_text: Vec<u8> = pad.clone();
+            chosen_plain_text.extend(recovered_plain_text.clone());
+            assert_eq!(chosen_plain_text.len() % block_size, block_size - 1, "Padding worked");
+
+            let last_block = chosen_plain_text.len() / block_size;
+            let trick_plain_block = &chosen_plain_text[last_block*block_size..];
+            let trick_cipher_block = &cipher_text[last_block*block_size..(last_block+1)*block_size];
+//            println!("JB - trick_plain [{}]", b2s(&trick_plain_block));
+
+            let next_byte = c12_find_next_byte(&c12_cryptor, &trick_plain_block, &trick_cipher_block);
+            if !(next_byte == 0x0a || next_byte == 0xad || (next_byte >= 32 && next_byte < 127)) {
+                break
+            }
+            recovered_plain_text.push(next_byte);
+        }
+        println!("S2C12 msg is {}", b2s(&recovered_plain_text));
+    }
+
+    fn c12_find_next_byte(cryptor: &Fn(&[u8]) -> Vec<u8>, plain_block: &[u8], trick_cipher_block: &[u8]) -> u8 {
+        let block_size = trick_cipher_block.len();
+        for guess in 0..=255 {
+            let mut trial_plain_text = plain_block.to_vec();
+            trial_plain_text.push(guess);
+//            println!("JB - trial_plain [{}]", b2s(&trial_plain_text));
+            let trial_cipher_text = cryptor(&trial_plain_text);
+//            println!("JB - trial block is: {:?}", &trial_cipher_text[0..block_size]);
+//            println!("JB - trick_cipher is: {:?}", &trick_cipher_block);
+            if &trial_cipher_text[0..block_size] == trick_cipher_block {
+                return guess
+            }
+        }
+        panic!("Failed to find byte");
     }
 
     fn find_blocksize(cryptor: &Fn(&[u8]) -> Vec<u8>) -> usize {
@@ -48,9 +98,10 @@ pub mod set2 {
 aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq
 dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg
 YnkK", "\n", "");
-        let suffix = &base642bytes(&s2b(&suffix)).expect("Must be base64!").to_vec();
+        let suffix = &base642bytes(&s2b(&suffix)).expect("Must be base64!");
 
-        plain_text.to_vec().append(&mut suffix.clone());
+        let mut plain_text = plain_text.to_vec();
+        plain_text.extend_from_slice(suffix);
         aes128_ecb_encode(&key, &plain_text)
     }
 
@@ -84,10 +135,9 @@ YnkK", "\n", "");
         let block_size = 16;
         let key = get_random_bytes(block_size);
 
-        let plain_vec = &mut plain_text.to_vec();
         let mut extended_plain_text = get_random_buf(5, 10);
-        extended_plain_text.append(plain_vec);
-        extended_plain_text.append(&mut get_random_buf(5, 10));
+        extended_plain_text.extend_from_slice(plain_text);
+        extended_plain_text.extend(get_random_buf(5, 10));
 
 
         let use_ecb = rand::random();
@@ -130,7 +180,7 @@ YnkK", "\n", "");
             last_cipher_block = cipher_block.clone().to_vec();
             plain_block
         });
-        pkcs7_unpad(block_size, &plain_blocks.collect::<Vec<_>>().concat())
+        pkcs7_unpad(block_size, &plain_blocks.collect::<Vec<_>>().concat()).unwrap()
     }
 
 
@@ -199,7 +249,7 @@ pub mod set1 {
     pub fn aes128_ecb_decode(key: &[u8], cipher_text: &[u8]) -> Vec<u8> {
         let block_size = 16;
         let padded_plain_text = aes128_ecb_helper(false, key, cipher_text);
-        pkcs7_unpad(block_size, &padded_plain_text)
+        pkcs7_unpad(block_size, &padded_plain_text).unwrap()
     }
 
     fn aes128_ecb_helper(encode: bool, key: &[u8], in_text: &[u8]) -> Vec<u8> {
@@ -416,7 +466,7 @@ mod tests {
                 let padded_msg = pkcs7_pad(block_size, &msg);
                 assert_eq!(padded_msg, expected_padded_msg);
                 assert!(padded_msg.len() % block_size == 0, "padded msg is a multiple of block size");
-                let unpadded_msg = pkcs7_unpad(block_size, &padded_msg);
+                let unpadded_msg = pkcs7_unpad(block_size, &padded_msg).unwrap();
                 assert_eq!(unpadded_msg, msg);
             }
         }
@@ -444,7 +494,6 @@ mod tests {
             let iv = &s2b("badger cavorting");
             for test_case in test_cases.iter() {
                 let plain_text = &s2b(test_case);
-                println!("JB test {}", test_case);
                 let ecb_cipher_text = &aes128_ecb_encode(&key, plain_text);
                 let re_ecb_plain_text = &aes128_ecb_decode(&key, &ecb_cipher_text);
                 assert_eq!(plain_text, re_ecb_plain_text, "Get back the text we expect - ecb {}", *test_case);
@@ -589,16 +638,23 @@ pub mod util {
         v
     }
 
-    pub fn pkcs7_unpad(block_size: usize, buf: &[u8]) -> Vec<u8> {
+    pub fn pkcs7_unpad(block_size: usize, buf: &[u8]) -> Result<Vec<u8>,&str> {
         let num_blocks = buf.len() / block_size;
-        buf.chunks(block_size).enumerate().map(|(i, chunk)| {
-            if i < num_blocks - 1 {
-                chunk
-            } else {
-                let discard_bytes = *chunk.last().unwrap() as usize;
-                &chunk[0..chunk.len() - discard_bytes]
+        if num_blocks * block_size != buf.len() {
+            return Err("Length not a multiple of block size")
+        }
+
+        let last_chunk = &buf[(num_blocks-1) * block_size..];
+        let discard_bytes = *last_chunk.last().unwrap() as usize;
+        if discard_bytes > last_chunk.len() {
+            return Err("Invalid padding value");
+        }
+        for _ in 0..discard_bytes {
+            if last_chunk[last_chunk.len() - discard_bytes] != discard_bytes as u8 {
+                return Err("Invalid padding bytes");
             }
-        }).collect::<Vec<_>>().concat()
+        }
+        Ok(buf[0..buf.len() - discard_bytes].to_vec())
     }
 
 
