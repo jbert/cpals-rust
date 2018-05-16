@@ -12,8 +12,19 @@ pub mod set2 {
     use convert::*;
     use set1::*;
     use rand::Rng;
-    use std::collections::HashSet;
+    use std::collections::*;
     use std::iter;
+    use itertools::Itertools;
+
+
+    pub fn c13_parse_kv(s: &str) -> Result<HashMap<String,String>,String> {
+        s.split("&")
+            .map(|sub_string| match sub_string.split("=").next_tuple() {
+                Some(t) => Ok(t),
+                None => Err("No equals sign".to_string()),
+            }.map(|(k, v)| (k.to_string(), v.to_string())))
+            .collect()
+    }
 
     pub fn challenge12() {
         let key = get_random_bytes(16);
@@ -427,6 +438,28 @@ mod tests {
         use util::*;
         use convert::*;
         use set2::*;
+        use std::collections::*;
+
+        fn hm_to_string(hm: HashMap<&str, &str>) -> HashMap<String,String> {
+            hm.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        }
+
+        #[test]
+        fn challenge13() {
+            let test_cases = [
+                ("foo=bar", Ok(hashmap!("foo".to_string() => "bar".to_string()))),
+                ("bar", Err("No equals".to_string()))
+            ];
+
+            for test_case in test_cases.iter() {
+                let (s, ref expected_result) = *test_case;
+//                let expected_result = match expected_result {
+//                    Ok(hm) => Ok(hm_to_string(hm)),
+//                    Err(s) => Err(s.to_string()),
+//                };
+                assert_eq!(&c13_parse_kv(s), expected_result);
+            }
+        }
 
         #[test]
         fn challenge11() {
