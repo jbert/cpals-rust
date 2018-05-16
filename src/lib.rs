@@ -440,24 +440,28 @@ mod tests {
         use set2::*;
         use std::collections::*;
 
-        fn hm_to_string(hm: HashMap<&str, &str>) -> HashMap<String,String> {
+        fn hm_to_string(hm: &HashMap<&str, &str>) -> HashMap<String,String> {
             hm.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
         }
 
         #[test]
         fn challenge13() {
             let test_cases = [
-                ("foo=bar", Ok(hashmap!("foo".to_string() => "bar".to_string()))),
-                ("bar", Err("No equals".to_string()))
+                ("foo=bar", Ok(hashmap!("foo" => "bar"))),
+                ("foo=bar&baz=quux", Ok(hashmap!("foo" => "bar", "baz" => "quux"))),
+                ("baz=quux&foo=bar", Ok(hashmap!("foo" => "bar", "baz" => "quux"))),
+                ("baz=quux&baz=bar", Ok(hashmap!("baz" => "bar"))),
+                ("bar", Err("No equals sign")),
+                ("a=1&bar", Err("No equals sign")),
             ];
 
             for test_case in test_cases.iter() {
                 let (s, ref expected_result) = *test_case;
-//                let expected_result = match expected_result {
-//                    Ok(hm) => Ok(hm_to_string(hm)),
-//                    Err(s) => Err(s.to_string()),
-//                };
-                assert_eq!(&c13_parse_kv(s), expected_result);
+                let expected_result = match expected_result {
+                    Ok(hm) => Ok(hm_to_string(hm)),
+                    Err(s) => Err(s.to_string()),
+                };
+                assert_eq!(&c13_parse_kv(s), &expected_result);
             }
         }
 
