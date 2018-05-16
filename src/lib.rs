@@ -17,7 +17,54 @@ pub mod set2 {
     use itertools::Itertools;
 
 
-    pub fn c13_parse_kv(s: &str) -> Result<HashMap<String,String>,String> {
+    pub fn challenge13() {
+        let key = get_random_bytes(16);
+        let encode_profile_for_email = |email_address: &str| {
+            aes128_ecb_encode(&key, &s2b(&c13_profile_for(email_address)))
+        };
+        let decode_to_profile = |cipher_text: &[u8]| {
+            let profile_str = aes128_ecb_decode(&key, &cipher_text);
+            c13_parse_kv(&b2s(&profile_str))
+        };
+
+        let email = "bob@example.com";
+        println!("Profile for [{}] is [{}]", email, c13_profile_for(email));
+        let cipher_text = encode_profile_for_email(email);
+        let profile = decode_to_profile(&cipher_text);
+        println!("Role for decoded profile: {}", profile.expect("can get profile").role);
+    }
+
+    #[derive(Debug)]
+    pub struct UserProfile {
+        email: String,
+        uid: String,
+        role: String,
+    }
+
+    impl UserProfile {
+        fn to_string(&self) -> String {
+            format!("email={}&uid={}&role={}", self.email, self.uid, self.role)
+        }
+        fn from_hm(hm: &HashMap<String,String>) -> UserProfile {
+            UserProfile{
+                email: hm.get(&"email".to_string()).expect("Must have email").clone(),
+                uid: hm.get(&"uid".to_string()).expect("Must have email").clone(),
+                role: hm.get(&"role".to_string()).expect("Must have email").clone(),
+            }
+        }
+    }
+
+    pub fn c13_profile_for(email_address: &str) -> String {
+        let email_address = email_address.replace("&","").replace("=","");
+        UserProfile{email: email_address.to_string(), uid: "10".to_string(), role: "user".to_string()}.to_string()
+    }
+
+    pub fn c13_parse_kv(s: &str) -> Result<UserProfile,String> {
+        let hm = c13_parse_kv_to_hm(&s)?;
+        Ok(UserProfile::from_hm(&hm))
+    }
+
+    pub fn c13_parse_kv_to_hm(s: &str) -> Result<HashMap<String,String>,String> {
         s.split("&")
             .map(|sub_string| match sub_string.split("=").next_tuple() {
                 Some(t) => Ok(t),
@@ -461,7 +508,7 @@ mod tests {
                     Ok(hm) => Ok(hm_to_string(hm)),
                     Err(s) => Err(s.to_string()),
                 };
-                assert_eq!(&c13_parse_kv(s), &expected_result);
+                assert_eq!(&c13_parse_kv_to_hm(s), &expected_result);
             }
         }
 
