@@ -19,19 +19,85 @@ pub mod set2 {
 
     pub fn challenge13() {
         let key = get_random_bytes(16);
-        let encode_profile_for_email = |email_address: &str| {
+        let mut encode_profile_for_email = |email_address: &[u8]| {
             aes128_ecb_encode(&key, &s2b(&c13_profile_for(email_address)))
         };
         let decode_to_profile = |cipher_text: &[u8]| {
             let profile_str = aes128_ecb_decode(&key, &cipher_text);
-            c13_parse_kv(&b2s(&profile_str))
+            c13_parse_kv(&profile_str)
         };
 
-        let email = "bob@example.com";
-        println!("Profile for [{}] is [{}]", email, c13_profile_for(email));
+        let email = &s2b("bob@example.com");
+        println!("S2C13 - Profile for [{}] is [{}]", b2s(&email), c13_profile_for(email));
         let cipher_text = encode_profile_for_email(email);
         let profile = decode_to_profile(&cipher_text);
-        println!("Role for decoded profile: {}", profile.expect("can get profile").role);
+        println!("S2C13 - Role for decoded profile: {}", profile.expect("can get profile").role);
+
+        let block_size = find_blocksize(&mut encode_profile_for_email);
+        println!("S2C13 - Oracle block size is {}", block_size);
+        let is_ecb = guess_cryptor_is_ecb(&mut encode_profile_for_email);
+        println!("S2C13 - cryptor is ecb? : {}", is_ecb);
+
+        // We want to encode this on a block boundary
+        let target_text_str = &b2s(&pkcs7_pad(block_size, &s2b(&"admin")));
+
+        // Loop with more and more padding in front of our target block
+        // until we see a duplicate block.
+        //
+        // When we have enough padding in front of our target block to cause duplicated blocks
+        // our target ciphertext is the block after the duplicates.
+        let mut target_cipher_block : Vec<u8> = Vec::new();
+        for padding in block_size - 1 .. block_size*3 {
+            let mut padded_email_address = "_".repeat(padding);
+            padded_email_address.push_str(&target_text_str);
+            padded_email_address.push_str("@example.com");  // because why not
+            let cipher_text = encode_profile_for_email(&s2b(&padded_email_address));
+
+            let mut next_is_target = false;
+            let mut last_block : Vec<u8> = Vec::new();
+            for block in cipher_text.chunks(block_size) {
+                if block.to_vec() == last_block {
+                    next_is_target = true;
+                    continue
+                }
+                if next_is_target {
+                    target_cipher_block = block.to_vec();
+                    break
+                }
+                last_block = block.to_vec();
+            }
+            if target_cipher_block.len() > 0 {
+                println!("S2C13 - found target at offset {}", padding);
+                break
+            }
+        }
+        if target_cipher_block.len() <= 0 {
+            panic!("Didn't find target cipher block")
+        }
+
+        // At some padding between 0..block_size the end block should
+        // be 'user<pkcspadding>'. If so, replacing it with our
+        // target cipher block should give us something which will decode
+        // to our desired plaintext
+        for padding in 0..block_size-1 {
+            let mut padded_email_address = "_".repeat(padding);
+            padded_email_address.push_str("@example.com");
+
+            let mut cipher_text = encode_profile_for_email(&s2b(&padded_email_address));
+//            cipher_text[cipher_text.len() - block_size..cipher_text.len()] = target_cipher_block;
+            let cipher_text_len = cipher_text.len();
+            cipher_text.splice(cipher_text_len - block_size .. cipher_text_len, target_cipher_block.clone());
+            match decode_to_profile(&cipher_text) {
+                Ok(profile) => if profile.role == "admin" {
+                    println!("S2C13 - did it! got an admin role");
+                    return
+                },
+                Err(_) => {
+                    continue // We don't care about failed decodes, we'll probably get a few
+                }
+            }
+        }
+        panic!("S2C13 fail. Bad coder, no biscuit");
     }
 
     #[derive(Debug)]
@@ -54,17 +120,19 @@ pub mod set2 {
         }
     }
 
-    pub fn c13_profile_for(email_address: &str) -> String {
+    pub fn c13_profile_for(email_address: &[u8]) -> String {
+        let email_address = &b2s(email_address);
         let email_address = email_address.replace("&","").replace("=","");
         UserProfile{email: email_address.to_string(), uid: "10".to_string(), role: "user".to_string()}.to_string()
     }
 
-    pub fn c13_parse_kv(s: &str) -> Result<UserProfile,String> {
+    pub fn c13_parse_kv(s: &[u8]) -> Result<UserProfile,String> {
         let hm = c13_parse_kv_to_hm(&s)?;
         Ok(UserProfile::from_hm(&hm))
     }
 
-    pub fn c13_parse_kv_to_hm(s: &str) -> Result<HashMap<String,String>,String> {
+    pub fn c13_parse_kv_to_hm(buf: &[u8]) -> Result<HashMap<String,String>,String> {
+        let s = &b2s(buf);
         s.split("&")
             .map(|sub_string| match sub_string.split("=").next_tuple() {
                 Some(t) => Ok(t),
@@ -137,7 +205,7 @@ pub mod set2 {
     fn find_blocksize(cryptor: &Fn(&[u8]) -> Vec<u8>) -> usize {
         let mut last_cipher_text_size = 0;
         for plaintext_len in 0..1024 {
-            let cipher_text = cryptor(&s2b(&"a".repeat(plaintext_len)));
+            let cipher_text = cryptor(&s2b(&"_".repeat(plaintext_len)));
             if last_cipher_text_size > 0 { // Not really necessary...can't we just encode 1 byte and assume PCKS-7?
                 if last_cipher_text_size != cipher_text.len() {
                     return cipher_text.len() - last_cipher_text_size;
@@ -209,7 +277,6 @@ YnkK", "\n", "");
 
     pub fn challenge10() {
         let cipher_text= slurp_base64_file("10.txt");
-        println!("JB - cipher length is {}", cipher_text.len());
         let iv = &s2b(&"\x00".repeat(16));
         let key = &s2b("YELLOW SUBMARINE");
         let plain_text = aes128_cbc_decode(&key, &iv, &cipher_text);
@@ -722,20 +789,20 @@ pub mod util {
         v
     }
 
-    pub fn pkcs7_unpad(block_size: usize, buf: &[u8]) -> Result<Vec<u8>,&str> {
+    pub fn pkcs7_unpad(block_size: usize, buf: &[u8]) -> Result<Vec<u8>,String> {
         let num_blocks = buf.len() / block_size;
         if num_blocks * block_size != buf.len() {
-            return Err("Length not a multiple of block size")
+            return Err(format!("Length [{}] not a multiple of block size [{}]", num_blocks, block_size))
         }
 
         let last_chunk = &buf[(num_blocks-1) * block_size..];
         let discard_bytes = *last_chunk.last().unwrap() as usize;
         if discard_bytes > last_chunk.len() {
-            return Err("Invalid padding value");
+            return Err(format!("Invalid padding value: discard {} len {}", discard_bytes, last_chunk.len()));
         }
         for _ in 0..discard_bytes {
             if last_chunk[last_chunk.len() - discard_bytes] != discard_bytes as u8 {
-                return Err("Invalid padding bytes");
+                return Err("Invalid padding bytes".to_string());
             }
         }
         Ok(buf[0..buf.len() - discard_bytes].to_vec())
