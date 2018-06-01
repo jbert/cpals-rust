@@ -814,6 +814,29 @@ mod tests {
         use std::collections::*;
         use util::*;
 
+        #[test]
+        fn challenge15() {
+            let test_cases = [
+                ("ICE ICE BABY\x04\x04\x04\x04", true, "ICE ICE BABY"),
+                ("ICE ICE BABY\x05\x05\x05\x05", false, ""),
+                ("ICE ICE BABY\x01\x02\x03\x04", false, ""),
+            ];
+            let block_size = 16;
+
+            for test_case in test_cases.iter() {
+                let (s, should_work, expected_unpadded) = *test_case;
+                match pkcs7_unpad(block_size, &s2b(&s)) {
+                    Ok(unpadded) => {
+                        assert!(should_work, "Succeeded successfully");
+                        assert_eq!(unpadded, s2b(expected_unpadded), "Correct unpadded string");
+                    }
+                    Err(_) => {
+                        assert!(!should_work, "Failed successfully");
+                    }
+                }
+            }
+        }
+
         fn hm_to_string(hm: &HashMap<&str, &str>) -> HashMap<String, String> {
             hm.iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -843,7 +866,7 @@ mod tests {
                     Ok(hm) => Ok(hm_to_string(hm)),
                     Err(s) => Err(s.to_string()),
                 };
-                assert_eq!(&c13_parse_kv_to_hm(s), &expected_result);
+                assert_eq!(&c13_parse_kv_to_hm(&s2b(s)), &expected_result);
             }
         }
 
