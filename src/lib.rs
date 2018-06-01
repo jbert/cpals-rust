@@ -15,7 +15,101 @@ pub mod set2 {
     use set1::*;
     use std::collections::*;
     use std::iter;
+    use std::panic::catch_unwind;
     use util::*;
+
+    pub fn challenge16() {
+        let block_size = 16;
+        let key = get_random_bytes(block_size);
+        let iv = get_random_bytes(block_size);
+        let c16_encryptor = |user_data: &[u8]| c16_encryptor_helper(&key, &iv, user_data);
+        let c16_decryptor = |cipher_text: &[u8]| c16_decryptor_helper(&key, &iv, cipher_text);
+
+        // We can choose plaintext and flip bits in ciphertext
+        // We'll have a sacrificial block in the plaintext which will get garbled when we flip
+        // followed by a target block starting ';admin=true;', but with a bit flipped in the ; and =
+        // chars
+        // We will flip the three bits needed in the ciphertext corresponding to the sacrificial
+        // block to flip back those three chars to the special chars.
+        // How to find the block offsets? Try 'em all
+
+        let pad_char = 'A' as u8;
+        let mut payload = s2b(";admin=true;");
+        payload[0] ^= 0x01;
+        payload[6] ^= 0x01;
+        payload[11] ^= 0x01;
+        for offset in 0..block_size {
+            // Sacrificial block plus pad chars to try offset
+            let mut chosen_plain_text: Vec<u8> =
+                iter::repeat(pad_char).take(block_size + offset).collect();
+            chosen_plain_text.extend_from_slice(&payload);
+            let mut cipher_text = c16_encryptor(&chosen_plain_text);
+            // We don't know which block to flip. Let's try 'em all
+            for block_index in 0..=cipher_text.len() / block_size {
+                // bit those flips
+                cipher_text[block_index * block_size + offset + 0] ^= 0x01;
+                cipher_text[block_index * block_size + offset + 6] ^= 0x01;
+                cipher_text[block_index * block_size + offset + 11] ^= 0x01;
+                match c16_decryptor(&cipher_text) {
+                    Ok(is_admin) => {
+                        println!("Got is_admin: {}", is_admin);
+                        if is_admin {
+                            println!("Woo dunnit");
+                            return;
+                        }
+                    }
+                    Err(err_str) => println!("Error decypting: {}", err_str),
+                }
+            }
+        }
+    }
+
+    pub fn c16_decryptor_helper(key: &[u8], iv: &[u8], cipher_text: &[u8]) -> Result<bool, String> {
+        let plain_text = match catch_unwind(|| aes128_cbc_decode(&key, &iv, &cipher_text)) {
+            Ok(plain_text) => Ok(plain_text),
+            Err(o) => Err(format!("Decode/padding error: {:?}", o)),
+        }?;
+        // Keep only ascii chars
+        let plain_text = plain_text
+            .iter()
+            .filter(|c| c.is_ascii())
+            .map(|c| *c)
+            .collect::<Vec<_>>();
+        match String::from_utf8(plain_text.to_vec()) {
+            Err(_) => {
+                println!("from_utf8 error");
+                // It's not an encoding error
+                Ok(false)
+            }
+            Ok(s) => {
+                println!("got {}", &s);
+                Ok(s.contains(";admin=true;"))
+            }
+        }
+    }
+
+    pub fn c16_encryptor_helper(key: &[u8], iv: &[u8], user_data: &[u8]) -> Vec<u8> {
+        let block_size = 16;
+        assert!(
+            key.len() == block_size,
+            format!("AES128 requires {} byte key", block_size)
+        );
+        assert!(
+            iv.len() == block_size,
+            format!("AES128 requires {} byte iv", block_size)
+        );
+
+        // Escape special chars
+        let user_data = &b2s(user_data).replace(";", "%3b").replace("=", "%3d");
+
+        let prefix = &s2b("comment1=cooking%20MCs;userdata=");
+        let suffix = &s2b(";comment2=%20like%20a%20pound%20of%20bacon");
+
+        let mut plain_text = prefix.to_vec();
+        plain_text.extend_from_slice(&s2b(&user_data));
+        plain_text.extend_from_slice(suffix);
+        aes128_cbc_encode(&key, &iv, &plain_text) // Include PKCS7 padding
+    }
 
     pub fn challenge14() {
         let key = get_random_bytes(16);
