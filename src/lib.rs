@@ -8,6 +8,57 @@ extern crate rand;
 #[macro_use]
 extern crate maplit;
 
+pub mod set3 {
+    use convert::*;
+    use rand::Rng;
+    use set2::*;
+    use std::panic::catch_unwind;
+
+    pub fn challenge17() {
+        let block_size = 16;
+        let key = get_random_bytes(block_size);
+        let iv = get_random_bytes(block_size);
+        let c17_encryptor = || c17_encryptor_helper(&key, &iv);
+        let c17_decryptor =
+            |cipher_text: &[u8]| aes128_cbc_decode_check_padding(&key, &iv, &cipher_text);
+
+        let cipher_text = c17_encryptor();
+        let (padding_ok, _) = c17_decryptor(&cipher_text);
+        println!("padding_ok {}", padding_ok);
+    }
+
+    fn aes128_cbc_decode_check_padding(
+        key: &[u8],
+        iv: &[u8],
+        cipher_text: &[u8],
+    ) -> (bool, Vec<u8>) {
+        match catch_unwind(|| aes128_cbc_decode(&key, &iv, &cipher_text)) {
+            Ok(plain_text) => (true, plain_text),
+            Err(_) => (false, Vec::new()),
+        }
+    }
+
+    fn c17_encryptor_helper(key: &[u8], iv: &[u8]) -> Vec<u8> {
+        let plain_texts = [
+            "MDAwMDAwTm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmc=",
+            "MDAwMDAxV2l0aCB0aGUgYmFzcyBraWNrZWQgaW4gYW5kIHRoZSBWZWdhJ3MgYXJlIHB1bXBpbic=",
+            "MDAwMDAyUXVpY2sgdG8gdGhlIHBvaW50LCB0byB0aGUgcG9pbnQsIG5vIGZha2luZw==",
+            "MDAwMDAzQ29va2luZyBNQydzIGxpa2UgYSBwb3VuZCBvZiBiYWNvbg==",
+            "MDAwMDA0QnVybmluZyAnZW0sIGlmIHlvdSBhaW4ndCBxdWljayBhbmQgbmltYmxl",
+            "MDAwMDA1SSBnbyBjcmF6eSB3aGVuIEkgaGVhciBhIGN5bWJhbA==",
+            "MDAwMDA2QW5kIGEgaGlnaCBoYXQgd2l0aCBhIHNvdXBlZCB1cCB0ZW1wbw==",
+            "MDAwMDA3SSdtIG9uIGEgcm9sbCwgaXQncyB0aW1lIHRvIGdvIHNvbG8=",
+            "MDAwMDA4b2xsaW4nIGluIG15IGZpdmUgcG9pbnQgb2g=",
+            "MDAwMDA5aXRoIG15IHJhZy10b3AgZG93biBzbyBteSBoYWlyIGNhbiBibG93",
+        ].iter()
+            .map(|b64_str| base642bytes(&s2b(&b64_str)).expect("Must be base64!"))
+            .collect::<Vec<_>>();
+
+        let plain_text = &plain_texts[rand::thread_rng().gen_range(0, plain_texts.len())];
+        aes128_cbc_encode(&key, &iv, &plain_text)
+    }
+}
+
 pub mod set2 {
     use convert::*;
     use itertools::Itertools;
