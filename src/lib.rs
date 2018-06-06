@@ -12,19 +12,78 @@ pub mod set3 {
     use convert::*;
     use rand::Rng;
     use set2::*;
-    use std::panic::catch_unwind;
 
     pub fn challenge17() {
         let block_size = 16;
         let key = get_random_bytes(block_size);
         let iv = get_random_bytes(block_size);
         let c17_encryptor = || c17_encryptor_helper(&key, &iv);
-        let c17_decryptor =
+        let mut c17_decryptor =
             |cipher_text: &[u8]| aes128_cbc_decode_check_padding(&key, &iv, &cipher_text);
 
         let cipher_text = c17_encryptor();
         let (padding_ok, _) = c17_decryptor(&cipher_text);
         println!("padding_ok {}", padding_ok);
+
+        let cblock_a = &iv;
+        let cblock_b = &cipher_text[0..block_size];
+        let pblock_b = c17_break_block(&cblock_a, &cblock_b, &mut c17_decryptor);
+        println!("block is {}", &b2s(&pblock_b));
+    }
+
+    fn c17_break_block(
+        cblock_a: &[u8],
+        cblock_b: &[u8],
+        padding_oracle: &mut FnMut(&[u8]) -> (bool, Vec<u8>),
+    ) -> Vec<u8> {
+        let block_size = cblock_a.len();
+        assert!(block_size > 0, "sanity");
+        assert_eq!(cblock_a.len(), cblock_b.len(), "Block sizes consistent");
+
+        let mut recovered_plain_text = Vec::new();
+        // We work from the end backwards.
+        // We want to guess a byte. Try all of them, xoring into the preceding block ciphertext
+        // until we get good padding.
+        // Then we know 'target_plain_text_byte XOR trial_byte == padding_byte'
+        // So we can reverse to get target_plain_text_byte
+        // Start at the end (padding 0x01) and work backwards to recover each byte (different
+        // padding each time)
+        for attack_index in (0..block_size).rev() {
+            let desired_padding_byte = block_size as u8 - attack_index as u8;
+            println!("JB ai {} desired {:?}", attack_index, desired_padding_byte);
+            // TODO: write as filter over 0..=256
+            let mut found_it = false;
+            for trial_byte in 0..=255 {
+                let mut attack_cipher_text = cblock_a.to_vec();
+                let mut xor_data: Vec<u8> = recovered_plain_text
+                    .clone()
+                    .iter()
+                    .map(|b| b ^ desired_padding_byte)
+                    .collect();
+                xor_data.insert(0, trial_byte);
+                xor_data.iter().enumerate().for_each(|(i, b)| {
+                    println!("JB - xor at {} with {:x?}", attack_index, b);
+                    attack_cipher_text[attack_index + i] = attack_cipher_text[attack_index + i] ^ b
+                });
+                attack_cipher_text.extend_from_slice(cblock_b);
+                let (padding_ok, _) = padding_oracle(&attack_cipher_text);
+                //                println!("JB byte {} ok {}", trial_byte, padding_ok);
+                if padding_ok {
+                    recovered_plain_text.insert(0, trial_byte ^ desired_padding_byte);
+                    found_it = true;
+                    break;
+                }
+            }
+            if !found_it {
+                panic!("didn't find it");
+            }
+            println!(
+                "Recovered: [{}] {:x?}",
+                b2s(&recovered_plain_text),
+                recovered_plain_text
+            );
+        }
+        recovered_plain_text
     }
 
     fn aes128_cbc_decode_check_padding(
@@ -32,7 +91,7 @@ pub mod set3 {
         iv: &[u8],
         cipher_text: &[u8],
     ) -> (bool, Vec<u8>) {
-        match catch_unwind(|| aes128_cbc_decode(&key, &iv, &cipher_text)) {
+        match try_aes128_cbc_decode(&key, &iv, &cipher_text) {
             Ok(plain_text) => (true, plain_text),
             Err(_) => (false, Vec::new()),
         }
@@ -644,6 +703,17 @@ YnkK",
     }
 
     pub fn aes128_cbc_decode(key: &[u8], iv: &[u8], cipher_text: &[u8]) -> Vec<u8> {
+        match try_aes128_cbc_decode(&key, &iv, &cipher_text) {
+            Ok(plain_text) => plain_text,
+            Err(s) => panic!(format!("Decode failed: {}", s)),
+        }
+    }
+
+    pub fn try_aes128_cbc_decode(
+        key: &[u8],
+        iv: &[u8],
+        cipher_text: &[u8],
+    ) -> Result<Vec<u8>, String> {
         let block_size = 16;
         assert!(
             key.len() == block_size,
@@ -667,7 +737,7 @@ YnkK",
             last_cipher_block = cipher_block.clone().to_vec();
             plain_block
         });
-        pkcs7_unpad(block_size, &plain_blocks.collect::<Vec<_>>().concat()).unwrap()
+        pkcs7_unpad(block_size, &plain_blocks.collect::<Vec<_>>().concat())
     }
 
     pub fn aes128_cbc_encode(key: &[u8], iv: &[u8], plain_text: &[u8]) -> Vec<u8> {
