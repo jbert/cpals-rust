@@ -12,6 +12,7 @@ pub mod set3 {
     use convert::*;
     use rand::Rng;
     use set2::*;
+    use util::*;
 
     pub fn challenge17() {
         let block_size = 16;
@@ -22,13 +23,30 @@ pub mod set3 {
             |cipher_text: &[u8]| aes128_cbc_decode_check_padding(&key, &iv, &cipher_text);
 
         let cipher_text = c17_encryptor();
-        let (padding_ok, _) = c17_decryptor(&cipher_text);
-        println!("padding_ok {}", padding_ok);
+        //        let (padding_ok, _) = c17_decryptor(&cipher_text);
+        //        println!("padding_ok {}", padding_ok);
 
-        let cblock_a = &iv;
-        let cblock_b = &cipher_text[0..block_size];
-        let pblock_b = c17_break_block(&cblock_a, &cblock_b, &mut c17_decryptor);
-        println!("block is {}", &b2s(&pblock_b));
+        let mut cipher_blocks = cipher_text.chunks(block_size).collect::<Vec<_>>();
+        cipher_blocks.insert(0, &iv);
+
+        let plain_text = cipher_blocks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i + 1 < cipher_blocks.len())
+            .map(|(i, cipher_block)| {
+                let pblock =
+                    c17_break_block(cipher_block, &cipher_blocks[i + 1], &mut c17_decryptor);
+                //                println!("block is {}", &b2s(&pblock));
+                pblock
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        let plain_text = pkcs7_unpad(block_size, &plain_text).unwrap();
+        println!("S3C17: {}", b2s(&plain_text));
+        //        let cblock_a = &iv;
+        //        let cblock_b = &cipher_text[0..block_size];
+        //        let pblock_b = c17_break_block(&cblock_a, &cblock_b, &mut c17_decryptor);
+        //        println!("block is {}", &b2s(&pblock_b));
     }
 
     fn c17_break_block(
@@ -50,26 +68,44 @@ pub mod set3 {
         // padding each time)
         for attack_index in (0..block_size).rev() {
             let desired_padding_byte = block_size as u8 - attack_index as u8;
-            println!("JB ai {} desired {:?}", attack_index, desired_padding_byte);
+            //            println!("JB ai {} desired {:?}", attack_index, desired_padding_byte);
             // TODO: write as filter over 0..=256
             let mut found_it = false;
             for trial_byte in 0..=255 {
-                let mut attack_cipher_text = cblock_a.to_vec();
+                let mut attack_block = cblock_a.to_vec();
                 let mut xor_data: Vec<u8> = recovered_plain_text
                     .clone()
                     .iter()
                     .map(|b| b ^ desired_padding_byte)
                     .collect();
-                xor_data.insert(0, trial_byte);
+                xor_data.insert(0, trial_byte ^ desired_padding_byte);
                 xor_data.iter().enumerate().for_each(|(i, b)| {
-                    println!("JB - xor at {} with {:x?}", attack_index, b);
-                    attack_cipher_text[attack_index + i] = attack_cipher_text[attack_index + i] ^ b
+                    //                    println!("JB - xor at {} with {:x?}", attack_index, b);
+                    attack_block[attack_index + i] = attack_block[attack_index + i] ^ b
                 });
+                let mut attack_cipher_text = attack_block.clone();
                 attack_cipher_text.extend_from_slice(cblock_b);
-                let (padding_ok, _) = padding_oracle(&attack_cipher_text);
+                let (mut padding_ok, _) = padding_oracle(&attack_cipher_text);
                 //                println!("JB byte {} ok {}", trial_byte, padding_ok);
+
+                if padding_ok && attack_index > 0 {
+                    // Also ensure byte before trial byte doesn't come out as 0x02, 0x03 etc (if there
+                    // is one)
+                    attack_block[attack_index - 1] = attack_block[attack_index - 1] ^ 0xf0;
+                    let mut attack_cipher_text = attack_block.clone();
+                    attack_cipher_text.extend_from_slice(cblock_b);
+                    let (second_padding_ok, _) = padding_oracle(&attack_cipher_text);
+                    padding_ok = second_padding_ok;
+                    //println!("JB - 2nd check on {:x}: {}", trial_byte, padding_ok);
+                }
                 if padding_ok {
-                    recovered_plain_text.insert(0, trial_byte ^ desired_padding_byte);
+                    recovered_plain_text.insert(0, trial_byte);
+                    /*
+                    println!(
+                        "JB - found {:x?} {}",
+                        recovered_plain_text[0], recovered_plain_text[0] as char
+                    );
+                    */
                     found_it = true;
                     break;
                 }
@@ -77,11 +113,13 @@ pub mod set3 {
             if !found_it {
                 panic!("didn't find it");
             }
+            /*
             println!(
                 "Recovered: [{}] {:x?}",
                 b2s(&recovered_plain_text),
                 recovered_plain_text
             );
+            */
         }
         recovered_plain_text
     }
@@ -93,7 +131,10 @@ pub mod set3 {
     ) -> (bool, Vec<u8>) {
         match try_aes128_cbc_decode(&key, &iv, &cipher_text) {
             Ok(plain_text) => (true, plain_text),
-            Err(_) => (false, Vec::new()),
+            Err(_err_str) => {
+                //                println!("JB Bad padding: {}", err_str);
+                (false, Vec::new())
+            }
         }
     }
 
@@ -1033,6 +1074,9 @@ mod tests {
         fn challenge15() {
             let test_cases = [
                 ("ICE ICE BABY\x04\x04\x04\x04", true, "ICE ICE BABY"),
+                ("ICE ICE BABY\x04\x01\x04\x04", false, ""),
+                ("ICE ICE BABY\x04\x04\x01\x04", false, ""),
+                ("ICE ICE BABY\x01\x04\x04\x04", false, ""),
                 ("ICE ICE BABY\x05\x05\x05\x05", false, ""),
                 ("ICE ICE BABY\x01\x02\x03\x04", false, ""),
             ];
@@ -1310,6 +1354,7 @@ pub mod util {
     }
 
     pub fn pkcs7_unpad(block_size: usize, buf: &[u8]) -> Result<Vec<u8>, String> {
+        /*
         let num_blocks = buf.len() / block_size;
         if num_blocks * block_size != buf.len() {
             return Err(format!(
@@ -1327,12 +1372,46 @@ pub mod util {
                 last_chunk.len()
             ));
         }
-        for _ in 0..discard_bytes {
-            if last_chunk[last_chunk.len() - discard_bytes] != discard_bytes as u8 {
-                return Err("Invalid padding bytes".to_string());
+        for pos in 0..discard_bytes {
+            if last_chunk[last_chunk.len() - pos - 1] != discard_bytes as u8 {
+                return Err(format!(
+                    "Invalid padding byte [{:x?} != {:x?}] at pos [{}]: {:x?}",
+                    last_chunk[last_chunk.len() - pos - 1],
+                    discard_bytes,
+                    pos,
+                    last_chunk
+                ));
             }
         }
         Ok(buf[0..buf.len() - discard_bytes].to_vec())
+        */
+        //        println!("JB unpad: {:x?}", buf);
+        if buf.len() % block_size != 0 {
+            return Err(format!(
+                "Non-block size buffer [{}] [{}]",
+                buf.len(),
+                block_size
+            ));
+        }
+
+        let buf = buf.clone();
+        let num_padding_bytes = *buf.last().unwrap() as usize;
+        if num_padding_bytes > block_size || num_padding_bytes == 0 {
+            return Err(format!(
+                "Invalid padding value: discard {} block_size {}: {:x?}",
+                num_padding_bytes, block_size, buf
+            ));
+        }
+        let (unpadded_buf, padding) = buf.split_at(buf.len() - num_padding_bytes);
+        for b in padding {
+            if *b != num_padding_bytes as u8 {
+                return Err(format!(
+                    "Invalid padding byte [{:x?} != {:x?}]: {:x?}",
+                    b, num_padding_bytes, padding
+                ));
+            }
+        }
+        return Ok(unpadded_buf.to_vec());
     }
 
     pub fn slurp_base64_file(filename: &str) -> Vec<u8> {
