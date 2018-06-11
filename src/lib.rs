@@ -1,6 +1,7 @@
 #![feature(iterator_step_by)]
 #![feature(extern_prelude)]
 extern crate base64;
+extern crate byteorder;
 extern crate itertools;
 extern crate openssl;
 extern crate rand;
@@ -11,8 +12,31 @@ extern crate maplit;
 pub mod set3 {
     use convert::*;
     use rand::Rng;
+    use set1::*;
     use set2::*;
     use util::*;
+
+    use byteorder::{LittleEndian, WriteBytesExt};
+
+    pub fn challenge18() {
+        let key = &s2b("YELLOW SUBMARINE");
+        let cipher_text_base64 =
+            &s2b("L77na/nrFsKvynd6HzOoG7GHTLXsTVu9qvY/2syLXzhPweyyMTJULu/6/kXX0KSvoOLSFQ==");
+        let cipher_text = &base642bytes(cipher_text_base64).expect("Must be base64!");
+        let plain_text = aes128_ctr_cryptor(&key, 0, &cipher_text);
+        println!("S3C18 {}", b2s(&plain_text));
+    }
+
+    pub fn aes128_ctr_cryptor(key: &[u8], nonce: u64, in_buf: &[u8]) -> Vec<u8> {
+        let key_stream = (0..).flat_map(|i: u64| {
+            let mut v = Vec::new();
+            v.clear();
+            v.write_u64::<LittleEndian>(nonce).unwrap();
+            v.write_u64::<LittleEndian>(i).unwrap();
+            aes128_crypt_block(true, &key, &v)
+        });
+        in_buf.iter().zip(key_stream).map(|(b, k)| b ^ k).collect()
+    }
 
     pub fn challenge17() {
         let block_size = 16;
