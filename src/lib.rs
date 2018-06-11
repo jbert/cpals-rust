@@ -18,6 +18,89 @@ pub mod set3 {
 
     use byteorder::{LittleEndian, WriteBytesExt};
 
+    pub fn challenge19() {
+        let plain_texts = [
+            "SSBoYXZlIG1ldCB0aGVtIGF0IGNsb3NlIG9mIGRheQ==",
+            "Q29taW5nIHdpdGggdml2aWQgZmFjZXM=",
+            "RnJvbSBjb3VudGVyIG9yIGRlc2sgYW1vbmcgZ3JleQ==",
+            "RWlnaHRlZW50aC1jZW50dXJ5IGhvdXNlcy4=",
+            "SSBoYXZlIHBhc3NlZCB3aXRoIGEgbm9kIG9mIHRoZSBoZWFk",
+            "T3IgcG9saXRlIG1lYW5pbmdsZXNzIHdvcmRzLA==",
+            "T3IgaGF2ZSBsaW5nZXJlZCBhd2hpbGUgYW5kIHNhaWQ=",
+            "UG9saXRlIG1lYW5pbmdsZXNzIHdvcmRzLA==",
+            "QW5kIHRob3VnaHQgYmVmb3JlIEkgaGFkIGRvbmU=",
+            "T2YgYSBtb2NraW5nIHRhbGUgb3IgYSBnaWJl",
+            "VG8gcGxlYXNlIGEgY29tcGFuaW9u",
+            "QXJvdW5kIHRoZSBmaXJlIGF0IHRoZSBjbHViLA==",
+            "QmVpbmcgY2VydGFpbiB0aGF0IHRoZXkgYW5kIEk=",
+            "QnV0IGxpdmVkIHdoZXJlIG1vdGxleSBpcyB3b3JuOg==",
+            "QWxsIGNoYW5nZWQsIGNoYW5nZWQgdXR0ZXJseTo=",
+            "QSB0ZXJyaWJsZSBiZWF1dHkgaXMgYm9ybi4=",
+            "VGhhdCB3b21hbidzIGRheXMgd2VyZSBzcGVudA==",
+            "SW4gaWdub3JhbnQgZ29vZCB3aWxsLA==",
+            "SGVyIG5pZ2h0cyBpbiBhcmd1bWVudA==",
+            "VW50aWwgaGVyIHZvaWNlIGdyZXcgc2hyaWxsLg==",
+            "V2hhdCB2b2ljZSBtb3JlIHN3ZWV0IHRoYW4gaGVycw==",
+            "V2hlbiB5b3VuZyBhbmQgYmVhdXRpZnVsLA==",
+            "U2hlIHJvZGUgdG8gaGFycmllcnM/",
+            "VGhpcyBtYW4gaGFkIGtlcHQgYSBzY2hvb2w=",
+            "QW5kIHJvZGUgb3VyIHdpbmdlZCBob3JzZS4=",
+            "VGhpcyBvdGhlciBoaXMgaGVscGVyIGFuZCBmcmllbmQ=",
+            "V2FzIGNvbWluZyBpbnRvIGhpcyBmb3JjZTs=",
+            "SGUgbWlnaHQgaGF2ZSB3b24gZmFtZSBpbiB0aGUgZW5kLA==",
+            "U28gc2Vuc2l0aXZlIGhpcyBuYXR1cmUgc2VlbWVkLA==",
+            "U28gZGFyaW5nIGFuZCBzd2VldCBoaXMgdGhvdWdodC4=",
+            "VGhpcyBvdGhlciBtYW4gSSBoYWQgZHJlYW1lZA==",
+            "QSBkcnVua2VuLCB2YWluLWdsb3Jpb3VzIGxvdXQu",
+            "SGUgaGFkIGRvbmUgbW9zdCBiaXR0ZXIgd3Jvbmc=",
+            "VG8gc29tZSB3aG8gYXJlIG5lYXIgbXkgaGVhcnQs",
+            "WWV0IEkgbnVtYmVyIGhpbSBpbiB0aGUgc29uZzs=",
+            "SGUsIHRvbywgaGFzIHJlc2lnbmVkIGhpcyBwYXJ0",
+            "SW4gdGhlIGNhc3VhbCBjb21lZHk7",
+            "SGUsIHRvbywgaGFzIGJlZW4gY2hhbmdlZCBpbiBoaXMgdHVybiw=",
+            "VHJhbnNmb3JtZWQgdXR0ZXJseTo=",
+            "QSB0ZXJyaWJsZSBiZWF1dHkgaXMgYm9ybi4=",
+        ].iter()
+            .map(|s| base642bytes(&s2b(&s)).expect("Must be base64!"));
+
+        // Each character position is XOR'd with the same byte (because the keystream
+        // is the same). So treat echo char position as a single-byte-xor problem.
+        // a la challenge 6
+
+        //        let key = get_random_bytes(16);
+        let key = hex2bytes("ed31796705d916b9f8b3a5a54c1dd6d2").unwrap();
+        let nonce = 0;
+        let c19_cryptor = |pt: &[u8]| aes128_ctr_cryptor(&key, nonce, &pt);
+
+        let cipher_texts = plain_texts.map(|pt| c19_cryptor(&pt)).collect::<Vec<_>>();
+
+        let longest_cipher_text_size = cipher_texts
+            .iter()
+            .map(|ct| ct.len())
+            .max()
+            .expect("Must have a max");
+        let mut guessed_key_stream = Vec::new();
+        guessed_key_stream.resize(longest_cipher_text_size, 0x00);
+
+        for i in 0..longest_cipher_text_size {
+            let transpose_buf: Vec<u8> = cipher_texts
+                .iter()
+                .filter_map(|buf| if buf.len() > i { Some(buf[i]) } else { None })
+                .collect();
+            let (k, _) = break_single_byte_xor(&transpose_buf);
+            guessed_key_stream[i] = k;
+
+            println!("{} =====================", i);
+            for cipher_text in cipher_texts.iter() {
+                let plain_text = b2s(&binary_dots(&xor_iter(
+                    cipher_text,
+                    guessed_key_stream.iter(),
+                ).unwrap()));
+                println!("{:x?}", plain_text);
+            }
+        }
+    }
+
     pub fn challenge18() {
         let key = &s2b("YELLOW SUBMARINE");
         let cipher_text_base64 =
@@ -1060,7 +1143,7 @@ pub mod set1 {
         println!("S1 C3 msg is: {}", b2s(&plain_text));
     }
 
-    fn break_single_byte_xor(cipher_text: &[u8]) -> (u8, f64) {
+    pub fn break_single_byte_xor(cipher_text: &[u8]) -> (u8, f64) {
         //        let ec = english_frequencies();
 
         let mut max_score = 0.0;
@@ -1634,6 +1717,21 @@ pub mod util {
         ys.iter().map(|y| x ^ y).collect()
     }
 
+    pub fn xor_iter<'a, I>(xs: &[u8], yiter: I) -> Result<Vec<u8>, String>
+    where
+        I: IntoIterator<Item = &'a u8>,
+    {
+        let buf = xs.iter()
+            .zip(yiter)
+            .map(|xy| xy.0 ^ xy.1)
+            .collect::<Vec<_>>();
+        if buf.len() == xs.len() {
+            Ok(buf)
+        } else {
+            Err(format!("Iterator too short: {} != {}", buf.len(), xs.len()))
+        }
+    }
+
     pub fn xor_buf(xs: &[u8], ys: &[u8]) -> Result<Vec<u8>, String> {
         if xs.len() != ys.len() {
             return Err(format!(
@@ -1660,7 +1758,21 @@ pub mod convert {
     use base64;
     use itertools::Itertools;
 
+    pub fn binary_dots(buf: &[u8]) -> Vec<u8> {
+        buf.iter()
+            .map(|&b| if b >= 0x20 && b <= 0x7f { b } else { '.' as u8 })
+            .collect()
+    }
+
+    pub fn strip_binary(buf: &[u8]) -> Vec<u8> {
+        buf.iter()
+            .map(|&b| b)
+            .filter(|b| *b >= 0x20 && *b <= 0x7f)
+            .collect()
+    }
+
     pub fn b2s(buf: &[u8]) -> String {
+        //        match String::from_utf8(buf.to_vec()) {
         match String::from_utf8(buf.to_vec()) {
             Ok(s) => s,
             Err(err) => format!("Can't decode bytes as utf8: {:?}: {}", buf, err),
