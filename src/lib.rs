@@ -16,6 +16,125 @@ pub mod set3 {
     use set2::*;
     use util::*;
 
+    pub fn challenge21() {
+        let mut mt = MersenneTwister::new();
+        mt.seed(19650218);
+        /*
+         * 1000 outputs of genrand_int32()
+         */
+        let genrand_int32_expected = [
+            1067595299, 955945823, 477289528, 4107218783, 4228976476, 3344332714, 3355579695,
+            227628506, 810200273, 2591290167, 2560260675, 3242736208, 646746669, 1479517882,
+            4245472273, 1143372638, 3863670494, 3221021970, 1773610557, 1138697238, 1421897700,
+            1269916527, 2859934041, 1764463362, 3874892047, 3965319921, 72549643, 2383988930,
+            2600218693, 3237492380,
+        ];
+
+        let mut oll_korrect = true;
+        for expected in genrand_int32_expected.iter() {
+            let actual = mt.genrand_int32();
+            println!(
+                "JB - mt number: {} expected {} OK {}",
+                actual,
+                expected,
+                actual == *expected
+            );
+            if actual != *expected {
+                oll_korrect = false;
+            }
+        }
+        println!("S3C21 - all correct: {}", oll_korrect);
+    }
+
+    pub struct MersenneTwister {
+        // See https://en.wikipedia.org/wiki/Mersenne_Twister#Algorithmic_detail
+        w: u32,
+        n: usize,
+        m: usize,
+        r: u32,
+        a: u32,
+        u: u32,
+        d: u32,
+        s: u32,
+        b: u32,
+        t: u32,
+        c: u32,
+        l: u32,
+        f: u32,
+
+        mt: Vec<u32>,
+        index: usize,
+    }
+    impl MersenneTwister {
+        pub fn new() -> MersenneTwister {
+            let mut mt = MersenneTwister {
+                w: 32,
+                n: 624,
+                m: 397,
+                r: 31,
+                a: 0x9908B0DF,
+                u: 11,
+                d: 0xFFFFFFFF,
+                s: 7,
+                b: 0x9D2C5680,
+                t: 15,
+                c: 0xEFC60000,
+                l: 18,
+                f: 1812433253,
+                mt: Vec::new(),
+
+                index: 0,
+            };
+            mt.mt.resize(mt.n as usize, 0);
+            mt.index = mt.n + 1;
+            mt
+        }
+
+        pub fn seed(&mut self, seed: u32) {
+            self.index = self.n;
+            self.mt[0] = seed;
+            for i in 1..self.n as usize {
+                // Don't need to truncate to 32bit because MT[] is Vec<u32>
+                self.mt[i as usize] = (self.f as u64
+                    * (self.mt[i - 1] as u64 ^ (self.mt[i - 1] as u64 >> (self.w - 2)))
+                    + i as u64) as u32;
+            }
+        }
+
+        pub fn genrand_int32(&mut self) -> u32 {
+            if self.index >= self.n {
+                if self.index > self.n {
+                    panic!("Generator was never seeded");
+                    // Alternatively, seed with constant value; 5489 is used in reference C code[46]
+                }
+                self.twist()
+            }
+
+            let y = self.mt[self.index];
+            let y = y ^ ((y >> self.u) & self.d);
+            let y = y ^ ((y << self.s) & self.b);
+            let y = y ^ ((y << self.t) & self.c);
+            let y = y ^ (y >> self.l);
+
+            self.index = self.index + 1;
+            y
+        }
+
+        fn twist(&mut self) {
+            let lower_mask: u32 = (1 << self.r) - 1;
+            let upper_mask: u32 = !lower_mask;
+            for i in 0..self.n {
+                let x = (self.mt[i] & upper_mask) + ((self.mt[(i + 1) % self.n]) & lower_mask);
+                let mut x_a = x >> 1;
+                if x % 2 != 0 {
+                    x_a = x_a ^ self.a;
+                }
+                self.mt[i] = self.mt[(i + self.m) % self.n] ^ x_a;
+            }
+            self.index = 0;
+        }
+    }
+
     use byteorder::{LittleEndian, WriteBytesExt};
 
     pub fn challenge20() {
