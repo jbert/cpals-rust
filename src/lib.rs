@@ -18,7 +18,26 @@ pub mod set3 {
 
     use byteorder::{LittleEndian, WriteBytesExt};
 
-    pub fn challenge19() {
+    pub fn challenge20() {
+        let cipher_texts = slurp_base64_file_as_lines("20.txt");
+        let shortest_length = cipher_texts
+            .iter()
+            .map(|ct| ct.len())
+            .min()
+            .expect("Must have a min");
+        let joined_cipher_text: Vec<u8> = cipher_texts
+            .iter()
+            .flat_map(|buf| buf[0..shortest_length].iter())
+            .map(|&b| b)
+            .collect();
+        let (_, joined_plain_text) = break_repeated_xor(shortest_length, &joined_cipher_text);
+        let lines = joined_plain_text.chunks(shortest_length);
+        for line in lines {
+            println!("S3C30 {}", b2s(&line));
+        }
+    }
+
+    pub fn challenge19_20() {
         let plain_texts = [
             "SSBoYXZlIG1ldCB0aGVtIGF0IGNsb3NlIG9mIGRheQ==",
             "Q29taW5nIHdpdGggdml2aWQgZmFjZXM=",
@@ -1528,6 +1547,17 @@ pub mod util {
         let contents = contents.replace("\n", "");
         let contents = base642bytes(&s2b(&contents)).expect("Data is not base64");
         contents
+    }
+
+    pub fn slurp_base64_file_as_lines(filename: &str) -> Vec<Vec<u8>> {
+        let f = File::open(filename).expect("File  not found");
+        let reader = BufReader::new(f);
+
+        reader
+            .lines()
+            .map(|l| l.expect("Error reading line"))
+            .map(|l| base642bytes(&s2b(&l)).expect("Must be base64"))
+            .collect()
     }
 
     pub fn slurp_hex_file_as_lines(filename: &str) -> Vec<Vec<u8>> {
