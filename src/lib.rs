@@ -1309,6 +1309,37 @@ pub mod set1 {
 
 #[cfg(test)]
 mod tests {
+    mod set3 {
+        use set3::*;
+
+        #[test]
+        fn test_mt_seed() {
+            let mut mt_a = MersenneTwister::new();
+            mt_a.seed(19650218);
+            let mut mt_b = MersenneTwister::new();
+            mt_b.seed(19650218);
+            let mut mt_x = MersenneTwister::new();
+            mt_x.seed(1623577);
+
+            let num_tests = 100;
+            for _ in 0..num_tests {
+                let a = mt_a.genrand_int32();
+                let b = mt_b.genrand_int32();
+                let x = mt_x.genrand_int32();
+                assert_eq!(
+                    a,
+                    b,
+                    //                    format!("Same seed for iteration {} still the same", i)
+                );
+                assert_ne!(
+                    a,
+                    x,
+                    //                    format!("Diff seed for iteration {} still the same", i)
+                );
+            }
+        }
+    }
+
     mod set2 {
         use convert::*;
         use set2::*;
