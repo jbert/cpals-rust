@@ -16,6 +16,44 @@ pub mod set3 {
     use set2::*;
     use util::*;
 
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn challenge22() {
+        let now = SystemTime::now();
+        let offset = Duration::new(500, 0);
+        let delta = rand::thread_rng().gen_range(0, 1000);
+        let seed_time = now - offset + Duration::new(delta, 0);
+
+        let epoch_seconds = |t: SystemTime| {
+            let duration = t.duration_since(UNIX_EPOCH)
+                .expect("Hope epoch was a long time ago");
+            duration.as_secs() as u32
+        };
+
+        let c22_helper = || {
+            let mut mt = MersenneTwister::new();
+            mt.seed(epoch_seconds(seed_time));
+            println!("S3C22 - sssh...seeded with {}", epoch_seconds(seed_time));
+            mt.genrand_int32()
+        };
+
+        // Find seed
+        let now = SystemTime::now();
+        let search_delta = 2000;
+        let offset = Duration::new(1000, 0);
+        let helper_first_rand = c22_helper();
+        for delta in 0..search_delta {
+            let mut mt = MersenneTwister::new();
+            let test_seed_time = now - offset + Duration::new(delta, 0);
+            mt.seed(epoch_seconds(test_seed_time));
+            let first_rand = mt.genrand_int32();
+            if helper_first_rand == first_rand {
+                println!("S3C22 - found seed {}", epoch_seconds(test_seed_time));
+                break;
+            }
+        }
+    }
+
     pub fn challenge21() {
         let mut mt = MersenneTwister::new();
         mt.seed(19650218);
