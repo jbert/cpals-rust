@@ -18,6 +18,23 @@ pub mod set3 {
 
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    pub fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
+        let mut state = Vec::new();
+        for _ in 0..624 {
+            let r = mt.genrand_int32();
+            println!("orig - got {:x}", r);
+            let y = mt.untemper(r);
+            state.push(y);
+        }
+        let mut cloned_mt = MersenneTwister::new();
+        cloned_mt.seed_from_state(&state);
+        for _ in 0..624 {
+            cloned_mt.genrand_int32();
+        }
+
+        cloned_mt
+    }
+
     pub fn challenge22() {
         let now = SystemTime::now();
         let offset = Duration::new(500, 0);
@@ -71,12 +88,14 @@ pub mod set3 {
         let mut oll_korrect = true;
         for expected in genrand_int32_expected.iter() {
             let actual = mt.genrand_int32();
+            /*
             println!(
                 "JB - mt number: {} expected {} OK {}",
                 actual,
                 expected,
                 actual == *expected
             );
+            */
             if actual != *expected {
                 oll_korrect = false;
             }
@@ -128,6 +147,16 @@ pub mod set3 {
             mt
         }
 
+        pub fn seed_from_state(&mut self, state: &[u32]) {
+            if state.len() != 624 {
+                panic!(format!("Invalid state size: {}", state.len()));
+            }
+            for (i, y) in state.iter().enumerate() {
+                self.mt[i] = *y;
+            }
+            self.index = 0;
+        }
+
         pub fn seed(&mut self, seed: u32) {
             self.index = self.n;
             self.mt[0] = seed;
@@ -149,12 +178,61 @@ pub mod set3 {
             }
 
             let y = self.mt[self.index];
-            let y = y ^ ((y >> self.u) & self.d);
-            let y = y ^ ((y << self.s) & self.b);
-            let y = y ^ ((y << self.t) & self.c);
-            let y = y ^ (y >> self.l);
-
             self.index = self.index + 1;
+            self.temper(y)
+        }
+
+        pub fn temper(&self, y: u32) -> u32 {
+            let y = self.rshift(y, self.u, self.d);
+            let y = self.lshift(y, self.s, self.b);
+            let y = self.lshift(y, self.t, self.c);
+            let y = self.rshift(y, self.l, 0xffffffff);
+
+            y
+        }
+
+        pub fn untemper(&self, y: u32) -> u32 {
+            let y = self.invert_rshift(y, self.l, 0xffffffff);
+            let y = self.invert_lshift(y, self.t, self.c);
+            let y = self.invert_lshift(y, self.s, self.b);
+            let y = self.invert_rshift(y, self.u, self.d);
+
+            y
+        }
+
+        pub fn rshift(&self, y: u32, num_bits: u32, mask: u32) -> u32 {
+            y ^ ((y >> num_bits) & mask)
+        }
+
+        pub fn lshift(&self, y: u32, num_bits: u32, mask: u32) -> u32 {
+            y ^ ((y << num_bits) & mask)
+        }
+
+        pub fn invert_rshift(&self, mut y: u32, num_bits: u32, mask: u32) -> u32 {
+            let mut read_bitmask = 1 << 31;
+            let mut write_bitmask = read_bitmask >> num_bits;
+            while write_bitmask > 0 {
+                let bit = y & read_bitmask;
+                if bit != 0 {
+                    y = y ^ write_bitmask & mask;
+                }
+                read_bitmask = read_bitmask >> 1;
+                write_bitmask = write_bitmask >> 1;
+            }
+            y
+        }
+
+        pub fn invert_lshift(&self, mut y: u32, num_bits: u32, mask: u32) -> u32 {
+            let mut read_bitmask = 1;
+            let mut write_bitmask = read_bitmask << num_bits;
+            while write_bitmask > 0 {
+                let bit = y & read_bitmask;
+                if bit != 0 {
+                    y = y ^ write_bitmask & mask;
+                }
+                read_bitmask = read_bitmask << 1;
+                write_bitmask = write_bitmask << 1;
+            }
             y
         }
 
@@ -1348,7 +1426,53 @@ pub mod set1 {
 #[cfg(test)]
 mod tests {
     mod set3 {
+        use rand::Rng;
         use set3::*;
+
+        #[test]
+        pub fn test_challenge23_tempering() {
+            let test_cases = (0..10).map(|_| rand::random::<u32>());
+            let l = 18;
+            let t = 15;
+            let c = 0xEFC60000;
+
+            let mt = MersenneTwister::new();
+
+            for tc in test_cases {
+                let y = tc ^ (tc >> l);
+                let x = y ^ (y >> l);
+                assert_eq!(x, tc);
+
+                let y = tc ^ (tc << l);
+                let x = y ^ (y << l);
+                assert_eq!(x, tc);
+
+                let y = tc ^ ((tc << t) & c);
+                let x = y ^ ((y << t) & c);
+                assert_eq!(x, tc);
+
+                let y_tempered = mt.temper(tc);
+                let y_untempered = mt.untemper(y_tempered);
+                assert_eq!(y_untempered, tc);
+            }
+        }
+
+        #[test]
+        pub fn test_challenge23() {
+            let random_seed = rand::thread_rng().gen();
+            let mut mt = MersenneTwister::new();
+            mt.seed(random_seed);
+
+            let mut cloned_mt = mt_clone(&mut mt);
+
+            let count = 100;
+            for _ in 0..count {
+                let orig_num = mt.genrand_int32();
+                let cloned_num = cloned_mt.genrand_int32();
+                println!("orig {:x} cloned {:x}", orig_num, cloned_num);
+                assert_eq!(orig_num, cloned_num, "orig and clone agree");
+            }
+        }
 
         #[test]
         fn test_mt_seed() {
