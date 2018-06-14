@@ -18,6 +18,21 @@ pub mod set3 {
 
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    pub fn mt_ctr_cryptor(seed: &u16, in_buf: &[u8]) -> Vec<u8> {
+        let mut mt = MersenneTwister::new();
+        mt.seed(*seed as u32);
+
+        let key_stream = (0..).flat_map(|_| {
+            let mut v = Vec::new();
+            //            v.clear();
+
+            let r = mt.genrand_int32();
+            v.write_u32::<LittleEndian>(r).unwrap();
+            v
+        });
+        in_buf.iter().zip(key_stream).map(|(b, k)| b ^ k).collect()
+    }
+
     pub fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
         let mut state = Vec::new();
         for _ in 0..624 {
@@ -367,7 +382,7 @@ pub mod set3 {
     pub fn aes128_ctr_cryptor(key: &[u8], nonce: u64, in_buf: &[u8]) -> Vec<u8> {
         let key_stream = (0..).flat_map(|i: u64| {
             let mut v = Vec::new();
-            v.clear();
+            //            v.clear();
             v.write_u64::<LittleEndian>(nonce).unwrap();
             v.write_u64::<LittleEndian>(i).unwrap();
             aes128_crypt_block(true, &key, &v)
@@ -1426,8 +1441,21 @@ pub mod set1 {
 #[cfg(test)]
 mod tests {
     mod set3 {
+        use convert::*;
         use rand::Rng;
         use set3::*;
+
+        #[test]
+        pub fn test_mt_ctr() {
+            let plain_text = &s2b("Wooodle booodle fluffetey buffetey");
+
+            let random_seed: u16 = rand::thread_rng().gen();
+            let cipher_text = &mt_ctr_cryptor(&random_seed, &plain_text);
+            assert_ne!(cipher_text, plain_text);
+
+            let replain_text = &mt_ctr_cryptor(&random_seed, &cipher_text);
+            assert_eq!(plain_text, replain_text);
+        }
 
         #[test]
         pub fn test_challenge23_tempering() {
