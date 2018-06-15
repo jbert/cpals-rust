@@ -9,18 +9,227 @@ extern crate rand;
 #[macro_use]
 extern crate maplit;
 
+pub mod set4 {
+    use convert::*;
+    use set1::*;
+    use set3::*;
+    use util::*;
+
+    use byteorder::{LittleEndian, WriteBytesExt};
+
+    pub fn challenge25() {
+        let file_key = &s2b("YELLOW SUBMARINE");
+        let ecb_cipher_text = slurp_base64_file("25.txt");
+        let plain_text = aes128_ecb_helper(false, &file_key, &ecb_cipher_text);
+
+        let key = get_random_bytes(16);
+        let nonce = 0;
+        let mut editable_cipher_text = aes128_ctr_cryptor(&key, nonce, &plain_text);
+        let original_cipher_text = editable_cipher_text.clone();
+
+        let mut chosen_plain_text = Vec::new();
+        chosen_plain_text.resize(original_cipher_text.len(), 0);
+        c25_aes128_ctr_seek_edit(
+            &mut editable_cipher_text,
+            &key,
+            nonce,
+            0,
+            &chosen_plain_text,
+        );
+        // Huh. That's just the key.
+        let recovered_plain_text = xor_buf(&editable_cipher_text, &original_cipher_text).unwrap();
+        println!("JB ct len {}", b2s(&recovered_plain_text));
+    }
+
+    pub fn c25_aes128_ctr_seek_edit(
+        cipher_text: &mut [u8],
+        key: &[u8],
+        nonce: u64,
+        offset: usize,
+        new_text: &[u8],
+    ) -> Option<String> {
+        let key_stream_for_block = |i_block: u64| {
+            let mut v = Vec::new();
+            v.write_u64::<LittleEndian>(nonce).unwrap();
+            v.write_u64::<LittleEndian>(i_block).unwrap();
+            aes128_crypt_block(true, &key, &v)
+        };
+        let block_size = 16;
+
+        for i in 0..new_text.len() {
+            let j = i + offset;
+            let j_block = j / block_size;
+            let key_stream = key_stream_for_block(j_block as u64);
+            let j_key_byte = key_stream[j % block_size];
+
+            cipher_text[j] = new_text[i] ^ j_key_byte;
+        }
+        None
+    }
+}
+
 pub mod set3 {
     use convert::*;
     use rand::Rng;
     use set1::*;
     use set2::*;
+    use std::clone::Clone;
     use util::*;
 
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    //    use std::iter::Iterator;
+    use std::time::{Duration, SystemTime};
 
-    pub fn mt_ctr_cryptor(seed: &u16, in_buf: &[u8]) -> Vec<u8> {
+    pub fn is_current_time_mt_token(token_buf: &[u8]) -> bool {
+        let now_epoch = epoch_seconds(SystemTime::now()) as u32;
+        let search_delta = 300;
+        for delta in 0..search_delta {
+            let mut mt = MersenneTwister::new();
+            let test_seed_time = now_epoch - delta;
+            mt.seed(test_seed_time);
+
+            let mt_start = mt.genrand_buf(200);
+            let overlap = longest_common_substring(&mt_start, &token_buf);
+            if overlap.len() == token_buf.len() {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn mt_make_password_token(length: usize) -> Vec<u8> {
+        let now = SystemTime::now();
+
         let mut mt = MersenneTwister::new();
-        mt.seed(*seed as u32);
+        mt.seed(epoch_seconds(now) as u32);
+        mt.genrand_buf(length)
+    }
+
+    pub fn challenge24() {
+        let hidden_random_seed: u16 = rand::thread_rng().gen();
+        let a_length = 18;
+        let fixed_plain_text = &s2b(&"A".repeat(a_length)).clone();
+
+        let c24_cryptor = {
+            println!("hidden random seed is {:x}", hidden_random_seed);
+            |pt| c24_cryptor_helper(hidden_random_seed, pt)
+        };
+
+        let cipher_text = c24_cryptor(fixed_plain_text);
+
+        let mut found_it = false;
+        for guessed_seed in 0..=65535 {
+            //        for guessed_seed in 0..=100 {
+            //            println!("Guessed seed {}", guessed_seed);
+            let key_stream_with_prefix = cipher_text
+                .iter()
+                .map(|&b| b ^ 'A' as u8)
+                .collect::<Vec<_>>();
+
+            let mut mt = MersenneTwister::new();
+            mt.seed(guessed_seed as u32);
+            let enough_bytes = 100;
+            let seed_key_stream = (0..)
+                .flat_map(|_| {
+                    let mut v = Vec::new();
+                    let r = mt.genrand_int32();
+                    v.write_u32::<LittleEndian>(r).unwrap();
+                    v
+                })
+                .take(enough_bytes)
+                .collect::<Vec<_>>();
+
+            let overlap = longest_common_substring(&key_stream_with_prefix, &seed_key_stream);
+            //            println!("JB - overlap len {} a_length {}", overlap.len(), a_length);
+            if overlap.len() >= a_length {
+                println!("Discovered seed: {:x}", guessed_seed);
+                found_it = true;
+                break;
+            }
+        }
+        if !found_it {
+            println!("Didn't find it :-(");
+        }
+    }
+
+    pub fn longest_common_substring(xs: &[u8], ys: &[u8]) -> Vec<u8> {
+        // algorithm shmalgorithm
+        let longest_first_all_substrings = SubstringFinder::new(ys);
+        for y_ss in longest_first_all_substrings {
+            if slice_contains(xs, &y_ss) {
+                return y_ss;
+            }
+        }
+        Vec::new()
+    }
+
+    pub fn slice_contains<I>(haystack: &[I], needle: &[I]) -> bool
+    where
+        I: PartialEq,
+    {
+        'HAYSTACK: for i in 0..haystack.len() {
+            'NEEDLE: for j in 0..needle.len() {
+                if i + j >= haystack.len() {
+                    return false;
+                }
+                if haystack[i + j] != needle[j] {
+                    continue 'HAYSTACK;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    pub struct SubstringFinder<T> {
+        start: usize,
+        length: usize,
+        s: Vec<T>,
+    }
+    impl<T> SubstringFinder<T>
+    where
+        T: Clone,
+    {
+        pub fn new(s: &[T]) -> SubstringFinder<T> {
+            let sv = s.to_vec();
+            SubstringFinder {
+                start: 0,
+                length: sv.len(),
+                s: sv,
+            }
+        }
+    }
+    impl<T> Iterator for SubstringFinder<T>
+    where
+        T: Clone,
+    {
+        type Item = Vec<T>;
+        fn next(&mut self) -> Option<Vec<T>> {
+            if self.start + self.length > self.s.len() {
+                self.start = 0;
+                self.length = self.length - 1;
+            }
+            if self.length == 0 {
+                return None;
+            }
+            // TODO - learn about lifetime so we don't need to allocate
+            let v = self.s[self.start..self.start + self.length].to_vec();
+            self.start = self.start + 1;
+            return Some(v);
+        }
+    }
+
+    pub fn c24_cryptor_helper(seed: u16, input_plain_text: &[u8]) -> Vec<u8> {
+        let num_prefix_bytes = rand::thread_rng().gen_range(30, 50);
+        let prefix = get_random_bytes(num_prefix_bytes);
+
+        let mut plain_text = prefix.to_vec();
+        plain_text.extend_from_slice(input_plain_text);
+        mt_ctr_cryptor(seed, &plain_text)
+    }
+
+    pub fn mt_ctr_cryptor(seed: u16, in_buf: &[u8]) -> Vec<u8> {
+        let mut mt = MersenneTwister::new();
+        mt.seed(seed as u32);
 
         let key_stream = (0..).flat_map(|_| {
             let mut v = Vec::new();
@@ -56,16 +265,13 @@ pub mod set3 {
         let delta = rand::thread_rng().gen_range(0, 1000);
         let seed_time = now - offset + Duration::new(delta, 0);
 
-        let epoch_seconds = |t: SystemTime| {
-            let duration = t.duration_since(UNIX_EPOCH)
-                .expect("Hope epoch was a long time ago");
-            duration.as_secs() as u32
-        };
-
         let c22_helper = || {
             let mut mt = MersenneTwister::new();
-            mt.seed(epoch_seconds(seed_time));
-            println!("S3C22 - sssh...seeded with {}", epoch_seconds(seed_time));
+            mt.seed(epoch_seconds(seed_time) as u32);
+            println!(
+                "S3C22 - sssh...seeded with {}",
+                epoch_seconds(seed_time) as u32
+            );
             mt.genrand_int32()
         };
 
@@ -77,10 +283,13 @@ pub mod set3 {
         for delta in 0..search_delta {
             let mut mt = MersenneTwister::new();
             let test_seed_time = now - offset + Duration::new(delta, 0);
-            mt.seed(epoch_seconds(test_seed_time));
+            mt.seed(epoch_seconds(test_seed_time) as u32);
             let first_rand = mt.genrand_int32();
             if helper_first_rand == first_rand {
-                println!("S3C22 - found seed {}", epoch_seconds(test_seed_time));
+                println!(
+                    "S3C22 - found seed {}",
+                    epoch_seconds(test_seed_time) as u32
+                );
                 break;
             }
         }
@@ -195,6 +404,18 @@ pub mod set3 {
             let y = self.mt[self.index];
             self.index = self.index + 1;
             self.temper(y)
+        }
+
+        pub fn genrand_buf(&mut self, length: usize) -> Vec<u8> {
+            let mut v = Vec::new();
+            loop {
+                let r = self.genrand_int32();
+                v.write_u32::<LittleEndian>(r).unwrap();
+                if v.len() >= length {
+                    v.truncate(length);
+                    return v;
+                }
+            }
         }
 
         pub fn temper(&self, y: u32) -> u32 {
@@ -1068,12 +1289,6 @@ YnkK",
         get_random_bytes(num)
     }
 
-    pub fn get_random_bytes(n: usize) -> Vec<u8> {
-        //        let mut rng = rand::thread_rng();
-        //        (0..n).map(|_| rng.gen()).collect()
-        (0..n).map(|_| rand::random::<u8>()).collect()
-    }
-
     pub fn guess_cryptor_is_ecb(encryptor: &mut FnMut(&[u8]) -> Vec<u8>) -> bool {
         let block_size = 16;
         let repeated_plain_text = "a".repeat(block_size * 4);
@@ -1240,7 +1455,7 @@ pub mod set1 {
         pkcs7_unpad(block_size, &padded_plain_text).unwrap()
     }
 
-    fn aes128_ecb_helper(encode: bool, key: &[u8], in_text: &[u8]) -> Vec<u8> {
+    pub fn aes128_ecb_helper(encode: bool, key: &[u8], in_text: &[u8]) -> Vec<u8> {
         let block_size = 16;
         in_text
             .chunks(block_size)
@@ -1443,17 +1658,91 @@ mod tests {
     mod set3 {
         use convert::*;
         use rand::Rng;
+        use set2::*;
         use set3::*;
+
+        #[test]
+        pub fn challenge24_b() {
+            let token_length = 16;
+            let test_cases = (0..20).map(|_| {
+                let is_a_token = rand::thread_rng().gen();
+                if is_a_token {
+                    (is_a_token, mt_make_password_token(token_length))
+                } else {
+                    (is_a_token, get_random_bytes(token_length))
+                }
+            });
+
+            for test_case in test_cases {
+                let (actually_is_a_token, buf) = test_case;
+                let detected_token = is_current_time_mt_token(&buf);
+                assert_eq!(actually_is_a_token, detected_token);
+            }
+        }
+
+        #[test]
+        pub fn test_longest_common_substring() {
+            let test_cases = [
+                ("fooo", "poodle", "oo"),
+                ("fooo", "pooodle", "ooo"),
+                ("fooo", "badger", ""),
+                ("foofoooofoo", "fooxfooooboo", "foooo"),
+            ];
+
+            for test_case in test_cases.iter() {
+                let (xs, ys, expected_longest) = *test_case;
+                let xs = &s2b(xs);
+                let ys = &s2b(ys);
+                let longest_ss = b2s(&longest_common_substring(xs, ys));
+                assert_eq!(longest_ss, expected_longest);
+            }
+        }
+
+        #[test]
+        pub fn test_slice_contains() {
+            let test_cases = [
+                ("fooo", "f", true),
+                ("ooo", "f", false),
+                ("furrfuu", "furr", true),
+                ("furrfuu", "urrf", true),
+                ("furrfuu", "fuu", true),
+                ("furrfuu", "rrr", false),
+                ("furrfuu", "uuu", false),
+            ];
+
+            for test_case in test_cases.iter() {
+                let (xs, ys, expected_contains) = *test_case;
+                let xs = s2b(xs);
+                let ys = s2b(ys);
+                let contains = slice_contains(&xs, &ys);
+                assert_eq!(contains, expected_contains);
+            }
+        }
+
+        #[test]
+        pub fn test_substring_finder() {
+            //            let test_cases = [("foo", ["f", "fo", "foo", "o", "oo", "o"])];
+            let test_cases = [("foo", ["foo", "fo", "oo", "f", "o", "o"])];
+            for test_case in test_cases.iter() {
+                let (s, ss) = *test_case;
+                let s = &s2b(&s);
+                let ss = ss.iter().map(|ss_str| s2b(ss_str));
+                let finder = SubstringFinder::new(s);
+                finder.for_each(|substr| println!("JB found {}", b2s(&substr)));
+                let finder = SubstringFinder::new(s);
+                assert!(finder.eq(ss));
+            }
+        }
 
         #[test]
         pub fn test_mt_ctr() {
             let plain_text = &s2b("Wooodle booodle fluffetey buffetey");
 
             let random_seed: u16 = rand::thread_rng().gen();
-            let cipher_text = &mt_ctr_cryptor(&random_seed, &plain_text);
+            let cipher_text = &mt_ctr_cryptor(random_seed, &plain_text);
             assert_ne!(cipher_text, plain_text);
 
-            let replain_text = &mt_ctr_cryptor(&random_seed, &cipher_text);
+            let replain_text = &mt_ctr_cryptor(random_seed, &cipher_text);
             assert_eq!(plain_text, replain_text);
         }
 
@@ -1497,7 +1786,7 @@ mod tests {
             for _ in 0..count {
                 let orig_num = mt.genrand_int32();
                 let cloned_num = cloned_mt.genrand_int32();
-                println!("orig {:x} cloned {:x}", orig_num, cloned_num);
+                //                println!("orig {:x} cloned {:x}", orig_num, cloned_num);
                 assert_eq!(orig_num, cloned_num, "orig and clone agree");
             }
         }
@@ -1805,6 +2094,20 @@ pub mod util {
     use std::io::BufRead;
     use std::io::BufReader;
     use std::io::Read;
+
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    pub fn get_random_bytes(n: usize) -> Vec<u8> {
+        //        let mut rng = rand::thread_rng();
+        //        (0..n).map(|_| rng.gen()).collect()
+        (0..n).map(|_| rand::random::<u8>()).collect()
+    }
+
+    pub fn epoch_seconds(t: SystemTime) -> u64 {
+        let duration = t.duration_since(UNIX_EPOCH)
+            .expect("Hope epoch was a long time ago");
+        duration.as_secs()
+    }
 
     pub fn pkcs7_pad(block_size: usize, buf: &[u8]) -> Vec<u8> {
         assert!(
