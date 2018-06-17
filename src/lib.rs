@@ -17,6 +17,79 @@ pub mod set4 {
 
     use byteorder::{LittleEndian, WriteBytesExt};
 
+    pub fn challenge26() {
+        let block_size = 16;
+        let key = get_random_bytes(block_size);
+        let nonce = 0;
+        let c26_encryptor = |user_data: &[u8]| c26_encryptor_helper(&key, nonce, user_data);
+        let c26_decryptor = |cipher_text: &[u8]| c26_decryptor_helper(&key, nonce, cipher_text);
+
+        let target_text = s2b(";admin=true;");
+        let chosen_plain_text = &s2b(&"\x00".repeat(target_text.len())).clone();
+        let cipher_text = c26_encryptor(chosen_plain_text);
+
+        // Somewhere in the cipher output is the keystream XOR'd with our chosen plaintext,
+        // which happens to be all zeros
+        // So if we XOR in our target_text at all different offsets, we should hit it
+        // at some point
+        for offset in 0..(cipher_text.len() - target_text.len()) {
+            let mut flipped_cipher_text = cipher_text.clone();
+            target_text.iter().enumerate().for_each(|(i, b)| {
+                flipped_cipher_text[offset + i] = flipped_cipher_text[offset + i] ^ b
+            });
+
+            let result = c26_decryptor(&flipped_cipher_text);
+            if result.is_ok() && result.unwrap() {
+                println!("S4C26 - yasss...got admin");
+                break;
+            }
+        }
+    }
+
+    pub fn c26_decryptor_helper(
+        key: &[u8],
+        nonce: u64,
+        cipher_text: &[u8],
+    ) -> Result<bool, String> {
+        let plain_text = aes128_ctr_cryptor(&key, nonce, &cipher_text);
+        // Keep only ascii chars
+        let plain_text = plain_text
+            .iter()
+            .filter(|c| c.is_ascii())
+            .map(|c| *c)
+            .collect::<Vec<_>>();
+        match String::from_utf8(plain_text.to_vec()) {
+            Err(_) => {
+                println!("from_utf8 error");
+                // It's not an encoding error
+                Ok(false)
+            }
+            Ok(s) => {
+                //                println!("got {}", &s);
+                Ok(s.contains(";admin=true;"))
+            }
+        }
+    }
+
+    pub fn c26_encryptor_helper(key: &[u8], nonce: u64, user_data: &[u8]) -> Vec<u8> {
+        let block_size = 16;
+        assert!(
+            key.len() == block_size,
+            format!("AES128 requires {} byte key", block_size)
+        );
+
+        // Escape special chars
+        let user_data = &b2s(user_data).replace(";", "%3b").replace("=", "%3d");
+
+        let prefix = &s2b("comment1=cooking%20MCs;userdata=");
+        let suffix = &s2b(";comment2=%20like%20a%20pound%20of%20bacon");
+
+        let mut plain_text = prefix.to_vec();
+        plain_text.extend_from_slice(&s2b(&user_data));
+        plain_text.extend_from_slice(suffix);
+        aes128_ctr_cryptor(&key, nonce, &plain_text)
+    }
+
     pub fn challenge25() {
         let file_key = &s2b("YELLOW SUBMARINE");
         let ecb_cipher_text = slurp_base64_file("25.txt");
@@ -246,7 +319,7 @@ pub mod set3 {
         let mut state = Vec::new();
         for _ in 0..624 {
             let r = mt.genrand_int32();
-            println!("orig - got {:x}", r);
+            //            println!("orig - got {:x}", r);
             let y = mt.untemper(r);
             state.push(y);
         }

@@ -20,5 +20,5 @@ fn main() {
        cpals::set3::challenge22();
     cpals::set3::challenge24();
        */
-    cpals::set4::challenge25();
+    cpals::set4::challenge26();
 }
