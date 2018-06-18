@@ -12,11 +12,78 @@ extern crate maplit;
 pub mod set4 {
     use convert::*;
     use set1::*;
+    use set2::*;
     use set3::*;
     use util::*;
 
     use byteorder::{LittleEndian, WriteBytesExt};
 
+    pub fn challenge27() {
+        let block_size = 16;
+        let hidden_key = get_random_bytes(block_size);
+        println!("S4C27 - the sekr1t key is [{:x?}]", hidden_key);
+        let iv = hidden_key.clone(); // This is the badness
+        let c27_encryptor = |user_data: &[u8]| c16_encryptor_helper(&hidden_key, &iv, user_data);
+        let c27_decryptor =
+            |cipher_text: &[u8]| c27_decryptor_helper(&hidden_key, &iv, cipher_text);
+        let cipher_text = c27_encryptor(&get_random_bytes(3 * block_size));
+
+        // Now let's attack - we want ciphertext block 0
+        let first_cipher_block = cipher_text.chunks(block_size).next().unwrap();
+
+        let mut zero_block = Vec::new();
+        let mut attack_blocks = Vec::new();
+        zero_block.resize(block_size, 0);
+        attack_blocks.push(first_cipher_block);
+        attack_blocks.push(&zero_block);
+        attack_blocks.push(first_cipher_block);
+
+        let attack_cipher_text = attack_blocks.concat();
+        let error = c27_decryptor(&attack_cipher_text);
+        match error {
+            Ok(_) => panic!("Somehow that decrypt was ascii <shrug>"),
+            Err(err_str) => {
+                let err_str = &err_str[12..];
+                let err_str = &err_str[..err_str.len() - 1];
+                let err_str = err_str.replace(", ", "");
+                let plain_text = hex2bytes(&err_str).unwrap();
+                let mut plain_blocks = plain_text.chunks(block_size);
+                let plain_1 = plain_blocks.next().unwrap();
+                plain_blocks.next();
+                let plain_3 = plain_blocks.next().unwrap();
+
+                //                let key = plain_0
+                //                    .iter()
+                //                    .zip(plain_2.iter())
+                //                    .map(|(x, y)| x ^ y)
+                //                    .collect::<Vec<_>>();
+                let key = xor_buf(&plain_1, &plain_3).unwrap();
+                println!("S4C27 - found key [{:x?}]: {}", key, key == hidden_key);
+            }
+        }
+    }
+
+    pub fn c27_decryptor_helper(key: &[u8], iv: &[u8], cipher_text: &[u8]) -> Result<bool, String> {
+        let padded_plain_text = aes128_cbc_decode_no_padding(&key, &iv, &cipher_text);
+        let ascii_plain_text = padded_plain_text
+            .iter()
+            .filter(|c| c.is_ascii())
+            .map(|c| *c)
+            .collect::<Vec<_>>();
+        if ascii_plain_text.len() != padded_plain_text.len() {
+            return Err(format!("Not ASCII: {:02x?}", padded_plain_text));
+        }
+        match String::from_utf8(ascii_plain_text.to_vec()) {
+            Err(_) => {
+                println!("from_utf8 error");
+                // It's not an encoding error
+                Ok(false)
+            }
+            Ok(s) => Ok(s.contains(";admin=true;")),
+        }
+    }
+
+    // We can choose plaintext and flip bits in ciphertext
     pub fn challenge26() {
         let block_size = 16;
         let key = get_random_bytes(block_size);
@@ -1420,6 +1487,12 @@ YnkK",
         cipher_text: &[u8],
     ) -> Result<Vec<u8>, String> {
         let block_size = 16;
+        let padded_plain_text = aes128_cbc_decode_no_padding(&key, &iv, &cipher_text);
+        pkcs7_unpad(block_size, &padded_plain_text)
+    }
+
+    pub fn aes128_cbc_decode_no_padding(key: &[u8], iv: &[u8], cipher_text: &[u8]) -> Vec<u8> {
+        let block_size = 16;
         assert!(
             key.len() == block_size,
             format!("AES128 requires {} byte key", block_size)
@@ -1427,6 +1500,10 @@ YnkK",
         assert!(
             iv.len() == block_size,
             format!("AES128 requires {} byte iv", block_size)
+        );
+        assert!(
+            cipher_text.len() % block_size == 0,
+            "Cipher text must be multiple of block size"
         );
 
         // CBC consumes previous ciphertext blocks, prepended with the IV
@@ -1442,7 +1519,7 @@ YnkK",
             last_cipher_block = cipher_block.clone().to_vec();
             plain_block
         });
-        pkcs7_unpad(block_size, &plain_blocks.collect::<Vec<_>>().concat())
+        plain_blocks.collect::<Vec<_>>().concat()
     }
 
     pub fn aes128_cbc_encode(key: &[u8], iv: &[u8], plain_text: &[u8]) -> Vec<u8> {
@@ -1464,6 +1541,10 @@ YnkK",
             let ecb_input_block =
                 &xor_buf(&plain_block, &last_cipher_block).expect("Block size mismatch!?");
             let cipher_block = aes128_crypt_block(true, &key, &ecb_input_block);
+            //            println!(
+            //                "JB - CBC prev cipher {:x?} plain block {:x?} cipher block {:x?}",
+            //                last_cipher_block, plain_block, cipher_block
+            //            );
             last_cipher_block = cipher_block.clone();
             cipher_block
         });
@@ -1731,8 +1812,8 @@ mod tests {
     mod set3 {
         use convert::*;
         use rand::Rng;
-        use set2::*;
         use set3::*;
+        use util::*;
 
         #[test]
         pub fn challenge24_b() {
