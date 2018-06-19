@@ -9,12 +9,44 @@ extern crate rand;
 #[macro_use]
 extern crate maplit;
 
+mod sha1;
+
 pub mod set4 {
     use convert::*;
     use set1::*;
     use set2::*;
     use set3::*;
+    use sha1::*;
     use util::*;
+
+    pub fn challenge28() {
+        let msg_a = s2b("play that funky music, white boy");
+        let key = get_random_bytes(10);
+        let mac_a = c28_mac(&key, &msg_a);
+        println!("mac a is {:02x?}", mac_a);
+        let mut msg_b = msg_a.clone();
+        msg_b[0] = 'P' as u8;
+        let mac_b = c28_mac(&key, &msg_b);
+        println!("mac b is {:02x?}", mac_a);
+        assert_ne!(mac_a, mac_b);
+
+        assert!(c28_validate_mac(&key, &msg_a, &mac_a));
+        assert!(c28_validate_mac(&key, &msg_b, &mac_b));
+        assert!(!c28_validate_mac(&key, &msg_b, &mac_a));
+        assert!(!c28_validate_mac(&key, &msg_a, &mac_b));
+    }
+
+    pub fn c28_validate_mac(key: &[u8], msg: &[u8], mac: &[u8]) -> bool {
+        let calculated_mac = c28_mac(key, msg);
+        mac.to_vec() == calculated_mac
+    }
+
+    pub fn c28_mac(key: &[u8], msg: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&key);
+        buf.extend_from_slice(&msg);
+        sha1(&buf)
+    }
 
     use byteorder::{LittleEndian, WriteBytesExt};
 
@@ -1813,6 +1845,22 @@ mod tests {
         use convert::*;
         use rand::Rng;
         use set3::*;
+        use sha1::*;
+
+        #[test]
+        pub fn test_challenge28() {
+            // $ echo -n "The quick brown fox jumps over the lazy dog" | sha1sum
+            // 2fd4e1c67a2d28fced849ee1bb76e7391b93eb12  -
+            let h = sha1(b"The quick brown fox jumps over the lazy dog");
+            assert_eq!(
+                h,
+                hex2bytes("2fd4e1c67a2d28fced849ee1bb76e7391b93eb12").unwrap()
+            );
+            println!("hash is {:02x?}", h);
+        }
+        /*
+         * Too slow to leave in
+         *
         use util::*;
 
         #[test]
@@ -1833,6 +1881,7 @@ mod tests {
                 assert_eq!(actually_is_a_token, detected_token);
             }
         }
+        */
 
         #[test]
         pub fn test_longest_common_substring() {
