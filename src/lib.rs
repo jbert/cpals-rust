@@ -19,6 +19,92 @@ pub mod set4 {
     use sha1::*;
     use util::*;
 
+    use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+
+    pub fn challenge29() {
+        let params =
+            &s2b("comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon");
+        let hidden_key = s2b("badger");
+        let mac = c28_mac(&hidden_key, &params);
+        let c29_validator =
+            |p: &[u8], m: &[u8]| c29_validated_url_str_is_admin(&hidden_key.clone(), &p, &m);
+
+        let result = c29_validator(&params, &mac).unwrap();
+        println!(
+            "S4C29 - We have a valid params (len {}) which gives admin: {:?}",
+            params.len(),
+            result
+        );
+
+        let attack_suffix = s2b(";admin=true");
+        let s = c29_split_sha1_hash(&mac);
+
+        for guessed_key_len in 0..16 {
+            let mut attack_params = params.to_vec();
+
+            // Predict the glue used in the original_hash.
+            let guessed_orig_msg_len = params.len() as u64 + guessed_key_len;
+            let guessed_orig_glue = &sha1_glue_padding(guessed_orig_msg_len);
+
+            attack_params.extend_from_slice(guessed_orig_glue);
+            attack_params.extend_from_slice(&attack_suffix);
+
+            let attack_mac = match sha1_with_state(
+                &attack_suffix,
+                attack_params.len() as u64 + guessed_key_len,
+                s[0],
+                s[1],
+                s[2],
+                s[3],
+                s[4],
+            ) {
+                Ok(am) => am,
+                Err(err_str) => {
+                    println!("sha1 failed (bad length?) : {:?}", err_str);
+                    continue;
+                }
+            };
+
+            match c29_validator(&attack_params, &attack_mac) {
+                Ok(is_admin) => if is_admin {
+                    println!(
+                        "S4C29 - got admin params with a good mac (guessed key len {})",
+                        guessed_key_len
+                    );
+                    break;
+                } else {
+                    println!("S4C29 - wtf!? got a good mac but no admin?");
+                    break;
+                },
+                Err(err_str) => {
+                    println!(
+                        "S4C29 - guess len [{}] failed with: {}",
+                        guessed_key_len, err_str
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn c29_split_sha1_hash(h: &[u8]) -> Vec<u32> {
+        h.chunks(4)
+            .map(|mut i| i.read_u32::<BigEndian>().unwrap())
+            .collect()
+    }
+
+    pub fn c29_validated_url_str_is_admin(
+        key: &[u8],
+        params: &[u8],
+        mac: &[u8],
+    ) -> Result<bool, String> {
+        let check_mac = c28_mac(key, params);
+        if check_mac != mac.to_vec() {
+            return Err("Invalid mac".to_string());
+        }
+        let ascii_param_str = b2s(&ascii_filter(&params));
+        Ok(ascii_param_str.contains(";admin=true"))
+    }
+
     pub fn challenge28() {
         let msg_a = s2b("play that funky music, white boy");
         let key = get_random_bytes(10);
@@ -47,8 +133,6 @@ pub mod set4 {
         buf.extend_from_slice(&msg);
         sha1(&buf)
     }
-
-    use byteorder::{LittleEndian, WriteBytesExt};
 
     pub fn challenge27() {
         let block_size = 16;
@@ -97,11 +181,7 @@ pub mod set4 {
 
     pub fn c27_decryptor_helper(key: &[u8], iv: &[u8], cipher_text: &[u8]) -> Result<bool, String> {
         let padded_plain_text = aes128_cbc_decode_no_padding(&key, &iv, &cipher_text);
-        let ascii_plain_text = padded_plain_text
-            .iter()
-            .filter(|c| c.is_ascii())
-            .map(|c| *c)
-            .collect::<Vec<_>>();
+        let ascii_plain_text = ascii_filter(&padded_plain_text);
         if ascii_plain_text.len() != padded_plain_text.len() {
             return Err(format!("Not ASCII: {:02x?}", padded_plain_text));
         }
@@ -752,7 +832,6 @@ pub mod set3 {
             let (k, _) = break_single_byte_xor(&transpose_buf);
             guessed_key_stream[i] = k;
 
-            println!("{} =====================", i);
             for cipher_text in cipher_texts.iter() {
                 let plain_text = b2s(&binary_dots(&xor_iter(
                     cipher_text,
@@ -1841,11 +1920,46 @@ pub mod set1 {
 
 #[cfg(test)]
 mod tests {
-    mod set3 {
+    mod set4 {
         use convert::*;
-        use rand::Rng;
-        use set3::*;
+        use set4::*;
         use sha1::*;
+
+        #[test]
+        pub fn test_challenge29() {
+            let orig_msg = s2b("The quick brown fox jumps over the lazy dog");
+            // This is hash of msg+glue1
+            let original_hash = sha1(&orig_msg);
+
+            // Predict the glue used in the original_hash.
+            let glue_padding = sha1_glue_padding(orig_msg.len() as u64);
+
+            // So if we do a real sha1 of (msg+glue+suffix)
+            let suffix = &s2b(" - quickly");
+            let mut msg = orig_msg.clone();
+            msg.extend_from_slice(&glue_padding);
+            msg.extend_from_slice(suffix);
+            let hash_extended_msg = sha1(&msg);
+
+            // Now go back to the original hash - we can extract the state
+            let s = c29_split_sha1_hash(&original_hash);
+            // And build a hash just from suffix+state (and knowledge of original length)
+            let hash_state_plus_padding = sha1_with_state(
+                suffix,
+                (orig_msg.len() + glue_padding.len() + suffix.len()) as u64,
+                s[0],
+                s[1],
+                s[2],
+                s[3],
+                s[4],
+            ).unwrap();
+
+            // And they match
+            assert_eq!(
+                hash_extended_msg, hash_state_plus_padding,
+                "hashing nothing extra leaves hash in same state"
+            );
+        }
 
         #[test]
         pub fn test_challenge28() {
@@ -1858,6 +1972,13 @@ mod tests {
             );
             println!("hash is {:02x?}", h);
         }
+    }
+
+    mod set3 {
+        use convert::*;
+        use rand::Rng;
+        use set3::*;
+
         /*
          * Too slow to leave in
          *
@@ -2299,6 +2420,10 @@ pub mod util {
     use std::io::Read;
 
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    pub fn ascii_filter(in_buf: &[u8]) -> Vec<u8> {
+        in_buf.iter().filter(|c| c.is_ascii()).map(|c| *c).collect()
+    }
 
     pub fn get_random_bytes(n: usize) -> Vec<u8> {
         //        let mut rng = rand::thread_rng();

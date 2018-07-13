@@ -26,39 +26,75 @@ pub fn sha1(input: &[u8]) -> Vec<u8> {
     // https://en.wikipedia.org/wiki/SHA-1#SHA-1_pseudocode
 
     // Initialize variables
-    let mut h0 = Wrapping(0x67_45_23_01);
-    let mut h1 = Wrapping(0xEF_CD_AB_89);
-    let mut h2 = Wrapping(0x98_BA_DC_FE);
-    let mut h3 = Wrapping(0x10_32_54_76);
-    let mut h4 = Wrapping(0xC3_D2_E1_F0);
+    let h0 = 0x67_45_23_01;
+    let h1 = 0xEF_CD_AB_89;
+    let h2 = 0x98_BA_DC_FE;
+    let h3 = 0x10_32_54_76;
+    let h4 = 0xC3_D2_E1_F0;
+    sha1_with_state(input, input.len() as u64, h0, h1, h2, h3, h4).unwrap()
+}
 
-    let ml = input.len() as u64 * 8;
+pub fn sha1_glue_padding(buflen_bytes: u64) -> Vec<u8> {
+    let bit_length = buflen_bytes * 8;
 
-    // Pre-processing
-
-    let mut buf = input.to_vec();
-
+    let mut glue = Vec::new();
+    //
     // append the bit '1' to the message e.g. by adding 0x80 if message length
     // is a multiple of 8 bits.
-    buf.push(0x80);
+    glue.push(0x80);
 
     // append 0 ≤ k < 512 bits '0', such that the resulting message length in
     // bits is congruent to −64 ≡ 448 (mod 512)
-    let to_fill = 512 - ((buf.len() * 8) % 512) - 64;
+    let to_fill = (2 * 512 - ((bit_length + 8) % 512) - 64) % 512;
 
     for _ in 0..to_fill / 8 {
-        buf.push(0);
+        glue.push(0);
     }
 
     // append ml, the original message length, as a 64-bit big-endian integer.
     // Thus, the total length is a multiple of 512 bits.
-    let mlbytes = {
-        let mut wtr: Vec<u8> = vec![];
-        wtr.write_u64::<BigEndian>(ml).expect("Couldn't write ml");
-        wtr
-    };
+    let mut msglen_bytes: Vec<u8> = vec![];
+    msglen_bytes
+        .write_u64::<BigEndian>(bit_length)
+        .expect("Couldn't write msglen");
 
-    buf.extend_from_slice(&mlbytes);
+    glue.append(&mut msglen_bytes);
+    glue
+}
+
+pub fn sha1_with_state(
+    input: &[u8],
+    full_input_len: u64,
+    h0: u32,
+    h1: u32,
+    h2: u32,
+    h3: u32,
+    h4: u32,
+) -> Result<Vec<u8>, String> {
+    // Initialize variables
+    let mut h0 = Wrapping(h0);
+    let mut h1 = Wrapping(h1);
+    let mut h2 = Wrapping(h2);
+    let mut h3 = Wrapping(h3);
+    let mut h4 = Wrapping(h4);
+
+    // Pre-processing
+
+    let mut buf = input.to_vec();
+    let orig_buf_len = buf.len();
+    let mut glue = sha1_glue_padding(full_input_len);
+    buf.append(&mut glue);
+
+    if buf.len() % 64 != 0 {
+        return Err(format!(
+            "Bad full_input_len: {} fil % 64 {} orig_buflen {} bglen {} buf+glue len mod64 {}",
+            full_input_len,
+            full_input_len % 64,
+            orig_buf_len,
+            buf.len(),
+            buf.len() % 64
+        ));
+    }
 
     // Process the message in successive 512-bit chunks:
     for chunk in buf.chunks(512 / 8) {
@@ -116,12 +152,23 @@ pub fn sha1(input: &[u8]) -> Vec<u8> {
     res.write_u32::<BigEndian>(h3.0).expect("Couldn't write h3");
     res.write_u32::<BigEndian>(h4.0).expect("Couldn't write h4");
 
-    res
+    Ok(res)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_lengths_ok() {
+        for msglen in 0..1024 {
+            let mut msg = Vec::new();
+            println!("try len {}", msglen);
+            msg.resize(msglen, 'a' as u8);
+            let h = sha1(&msg);
+            assert_eq!(h.len(), 20);
+        }
+    }
 
     #[test]
     fn empty_string() {
