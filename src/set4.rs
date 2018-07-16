@@ -28,18 +28,19 @@ pub fn challenge30() {
 
     let attack_suffix = s2b(";admin=true");
     let s = c30_md4_hash_to_state(&mac);
+    println!("JB - recovered state [{}]", &s.to_string());
 
     for guessed_key_len in 0..16 {
         let mut attack_params = params.to_vec();
 
         // Predict the glue used in the original_hash.
         let guessed_orig_msg_len = params.len() as u64 + guessed_key_len;
-        let guessed_orig_glue = &sha1_glue_padding(guessed_orig_msg_len);
+        let guessed_orig_glue = &md4_glue_padding(guessed_orig_msg_len);
 
         attack_params.extend_from_slice(guessed_orig_glue);
         attack_params.extend_from_slice(&attack_suffix);
 
-        let attack_mac = match md4_with_state(&attack_suffix, attack_params.len() as u64 + guessed_key_len, s) {
+        let attack_mac = match md4_with_state(&attack_suffix, params.len() as u64 + guessed_orig_glue.len() as u64 + guessed_key_len, s) {
             Ok(am) => am,
             Err(err_str) => {
                 println!("sha1 failed (bad length?) : {:?}", err_str);
@@ -68,17 +69,46 @@ pub fn challenge30() {
     }
 }
 
+pub fn md4_glue_padding(buflen_bytes: u64) -> Vec<u8> {
+    let bit_length = buflen_bytes * 8;
+
+    let mut glue = Vec::new();
+    //
+    // append the bit '1' to the message e.g. by adding 0x80 if message length
+    // is a multiple of 8 bits.
+    glue.push(0x80);
+
+    // append 0 ≤ k < 512 bits '0', such that the resulting message length in
+    // bits is congruent to −64 ≡ 448 (mod 512)
+    let to_fill = (2 * 512 - ((bit_length + 8) % 512) - 64) % 512;
+
+    for _ in 0..to_fill / 8 {
+        glue.push(0);
+    }
+
+    // append ml, the original message length, as a 64-bit big-endian integer.
+    // Thus, the total length is a multiple of 512 bits.
+    let mut msglen_bytes: Vec<u8> = vec![];
+    msglen_bytes
+        .write_u64::<LittleEndian>(bit_length)
+        .expect("Couldn't write msglen");
+
+    glue.append(&mut msglen_bytes);
+    glue
+}
+
 pub fn md4_with_state(input: &[u8], full_input_len: u64, s: Md4State) -> Result<Vec<u8>, String> {
     let mut h = Md4::new();
     h.state = s;
     h.length_bytes = full_input_len;
     h.process(&input);
-    Ok(h.fixed_result().to_vec())
+    let r = h.fixed_result().to_vec();
+    Ok(r)
 }
 
 pub fn c30_md4_hash_to_state(buf: &[u8]) -> Md4State {
     let words = buf.chunks(4)
-        .map(|mut i| i.read_u32::<BigEndian>().unwrap())
+        .map(|mut i| i.read_u32::<LittleEndian>().unwrap())
         .collect::<Vec<_>>();
     Md4State{s: u32x4(words[0], words[1], words[2], words[3])}
 }
@@ -101,13 +131,15 @@ pub fn c30_mac(key: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&key);
     buf.extend_from_slice(&msg);
-    md4(&buf)
+    
+md4(&buf)
 }
 
 pub fn md4(buf: &[u8]) -> Vec<u8> {
     let mut h = Md4::new();
     h.process(&buf);
-    h.fixed_result().to_vec()
+    let r = h.fixed_result();
+    r.to_vec()
 }
 
 pub fn challenge29() {

@@ -3,6 +3,61 @@ use set4::*;
 use sha1::*;
 
 #[test]
+pub fn test_md4() {
+    let test_cases = [
+        ("", "31d6cfe0d16ae931b73c59d7e0c089c0"),
+        ("a", "bde52cb31de33e46245e05fbdbd6fb24"),
+        ("12345678901234567890123456789012345678901234567890123456789012345678901234567890", "e33b4ddc9c38f2199c3e7b164fcc0536"),
+    ];
+    for test_case in test_cases.iter() {
+        println!("JB msg [{}]", test_case.0);
+        println!("JB sha1 glue padding [{:?}]", &md4_glue_padding(test_case.0.len() as u64));
+        let msg = s2b(test_case.0);
+        let expected_h = hex2bytes(&test_case.1).unwrap();
+        let h = md4(&msg);
+        assert_eq!(h, expected_h);
+    }
+}
+
+#[test]
+pub fn test_challenge30() {
+    let orig_msg = s2b("The quick brown fox jumps over the lazy dog");
+    // This is hash of msg+glue1
+    println!("JB - before orig hash");
+    let original_hash = md4(&orig_msg);
+    println!("JB - after  orig hash");
+
+    // Predict the glue used in the original_hash.
+    let glue_padding = md4_glue_padding(orig_msg.len() as u64);
+
+    // So if we do a real sha1 of (msg+glue+suffix)
+    let suffix = &s2b(" - quickly");
+    let mut msg = orig_msg.clone();
+    msg.extend_from_slice(&glue_padding);
+    msg.extend_from_slice(suffix);
+    println!("JB - before ext hash");
+    let hash_extended_msg = md4(&msg);
+    println!("JB - after  ext hash");
+
+    // Now go back to the original hash - we can extract the state
+    let s = c30_md4_hash_to_state(&original_hash);
+    // And build a hash just from suffix+state (and knowledge of original length)
+    println!("JB - before hash-with-state");
+    let hash_state_plus_padding = md4_with_state(
+        suffix,
+        (orig_msg.len() + glue_padding.len()) as u64,
+        s
+    ).unwrap();
+    println!("JB - after  hash-with-state");
+
+    // And they match
+    assert_eq!(
+        hash_extended_msg, hash_state_plus_padding,
+        "hashing nothing extra leaves hash in same state"
+    );
+}
+
+#[test]
 pub fn test_challenge29() {
     let orig_msg = s2b("The quick brown fox jumps over the lazy dog");
     // This is hash of msg+glue1

@@ -33,6 +33,10 @@ pub struct Md4 {
 }
 
 impl Md4State {
+    pub fn to_string(&self) -> String {
+        format!("[{:08x} {:08x} {:08x} {:08x}]", self.s.0, self.s.1, self.s.2, self.s.3)
+    }
+
     fn process_block(&mut self, input: &Block) {
         fn f(x: u32, y: u32, z: u32) -> u32 {
             (x & y) | (!x & z)
