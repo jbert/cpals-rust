@@ -11,6 +11,70 @@ use simd::u32x4;
 
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 
+use hyper::{Body, Response, Server, Request};
+use hyper::service::service_fn_ok;
+use hyper::rt::Future;
+
+use std::iter::*;
+
+pub fn challenge31() {
+
+    let hostport = ([127, 0, 0, 1], 8080).into();
+
+    let server = Server::bind(&hostport)
+        .serve(|| service_fn_ok(c31_handler))
+        .map_err(|e| eprintln!("server error: {}", e));
+
+    hyper::rt::run(server);
+}
+
+pub fn hmac_sha1(key: &[u8], msg: &[u8]) -> Vec<u8> {
+    let sha1_block_size = 64;
+
+    let key = if key.len() > sha1_block_size {
+        sha1(&key)
+    } else {
+        key.to_vec()
+    };
+    let key_len = key.len();
+    let key = if key_len < sha1_block_size {
+        let mut key = key.to_vec();
+        key.extend(repeat(0).take(sha1_block_size - key_len));
+        key
+    } else {
+        key
+    };
+    assert_eq!(key.len(), sha1_block_size, "keylen is now block size");
+    let opad = repeat(0x5c).take(sha1_block_size).collect::<Vec<_>>();
+    let o_key_pad = xor_buf(&key, &opad).unwrap();
+    let ipad = repeat(0x36).take(sha1_block_size).collect::<Vec<_>>();
+    let i_key_pad = xor_buf(&key, &ipad).unwrap();
+    let mut i_msg = i_key_pad;
+    i_msg.extend_from_slice(msg);
+    let i_hash = sha1(&i_msg);
+    let mut o_msg = o_key_pad;
+    o_msg.extend_from_slice(&i_hash);
+    sha1(&o_msg)
+}
+
+pub fn c31_handler(req: Request<Body>) -> Response<Body> {
+    // OK, I give up. Hyper may be in transition (2018/07/19)
+    // or I may just be frustrated by docco, but for now I'll assume the
+    // whole query string is the mac to verify, rather than "?mac=1234"
+    let q = req.uri().query();
+    let q = match q {
+        Some(q) => q,
+        None => "<absent>",
+    };
+    if q == "shutdown" {
+        println!("Done! bye....");
+        std::process::exit(0);
+    }
+    
+    let body = format!("hello world: q is {}", q);
+    Response::new(Body::from(body))
+}
+
 pub fn challenge30() {
     let params =
         &s2b("comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon");

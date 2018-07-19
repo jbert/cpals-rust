@@ -3,6 +3,21 @@ use set4::*;
 use sha1::*;
 
 #[test]
+pub fn test_hmac_sha1() {
+    let test_cases = [
+        ("", "", "fbdb1d1b18aa6c08324b7d64b71fb76370690e1d"),
+        ("key", "The quick brown fox jumps over the lazy dog", "de7c9b85b8b78aa6bc8a7a36f70a90701c9db4d9"),
+    ];
+    for test_case in test_cases.iter() {
+        let key = s2b(test_case.0);
+        let msg = s2b(test_case.1);
+        let expected_h = hex2bytes(&test_case.2).unwrap();
+        let h = hmac_sha1(&key, &msg);
+        assert_eq!(h, expected_h);
+    }
+}
+
+#[test]
 pub fn test_md4() {
     let test_cases = [
         ("", "31d6cfe0d16ae931b73c59d7e0c089c0"),
@@ -10,8 +25,8 @@ pub fn test_md4() {
         ("12345678901234567890123456789012345678901234567890123456789012345678901234567890", "e33b4ddc9c38f2199c3e7b164fcc0536"),
     ];
     for test_case in test_cases.iter() {
-        println!("JB msg [{}]", test_case.0);
-        println!("JB sha1 glue padding [{:?}]", &md4_glue_padding(test_case.0.len() as u64));
+//        println!("JB msg [{}]", test_case.0);
+//        println!("JB sha1 glue padding [{:?}]", &md4_glue_padding(test_case.0.len() as u64));
         let msg = s2b(test_case.0);
         let expected_h = hex2bytes(&test_case.1).unwrap();
         let h = md4(&msg);

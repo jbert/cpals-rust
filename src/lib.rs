@@ -12,6 +12,8 @@ extern crate maplit;
 extern crate digest;
 extern crate fake_simd as simd;
 
+extern crate hyper;
+
 mod md4;
 mod sha1;
 mod convert;
@@ -24,3 +26,4 @@ pub mod set4;
 
 #[cfg(test)]
 mod tests;
+
