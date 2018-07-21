@@ -11,21 +11,53 @@ use simd::u32x4;
 
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 
-use hyper::{Body, Response, Server, Request};
+use hyper::{Body, Response, Server, Request, StatusCode};
 use hyper::service::service_fn_ok;
 use hyper::rt::Future;
 
 use std::iter::*;
+use std::collections::*;
+use std;
 
 pub fn challenge31() {
 
-    let hostport = ([127, 0, 0, 1], 8080).into();
+    let hostport = "127.0.0.1:8080";
+    std::thread::spawn(|| {
+        let socketaddr = hostport.parse().unwrap();
+        let server = Server::bind(&socketaddr)
+            .serve(|| service_fn_ok(c31_handler))
+            .map_err(|e| eprintln!("server error: {}", e));
 
-    let server = Server::bind(&hostport)
-        .serve(|| service_fn_ok(c31_handler))
-        .map_err(|e| eprintln!("server error: {}", e));
+        hyper::rt::run(server);
+    });
 
-    hyper::rt::run(server);
+    let example_file = "badger";
+    let discovered_mac = c31_find_mac_for_file(&example_file, hostport);
+    println!("Discovered mac {} for file {}", b2s(&discovered_mac), example_file);
+}
+
+pub fn c31_find_mac_for_file(fname: &str, hostport: &str) -> Vec<u8> {
+    let base_url = format!("http://{}", hostport);
+    let c = hyper::client::Client::new();
+    let fut = c.get(base_url.parse().unwrap)
+        .and_then(|resp| {
+            println!("Response: {}", resp.status());
+        })
+    println!("JB - resp status {}", resp.status);
+    Vec::new()
+}
+
+pub fn c31_insecure_compare(xs: &[u8], ys: &[u8]) -> bool {
+    if xs.len() != ys.len() {
+        return false
+    }
+    for i in 0..xs.len() {
+        if xs[i] != ys[i] {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    return true;
 }
 
 pub fn hmac_sha1(key: &[u8], msg: &[u8]) -> Vec<u8> {
@@ -66,13 +98,32 @@ pub fn c31_handler(req: Request<Body>) -> Response<Body> {
         Some(q) => q,
         None => "<absent>",
     };
-    if q == "shutdown" {
+    let params = url::form_urlencoded::parse(q.as_bytes()).into_owned().collect::<HashMap<_,_>>();
+    if params.get("shutdown").is_some() {
         println!("Done! bye....");
         std::process::exit(0);
     }
+    let file = params.get("file");
+    if file.is_none() {
+        return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::from("Must supply 'file' param\n")).unwrap();
+    }
+    let file = file.unwrap();
+    let sig = params.get("signature");
+    if sig.is_none() {
+        return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::from("Must supply 'signature' param\n")).unwrap();
+    }
+    let sig = sig.unwrap();
     
-    let body = format!("hello world: q is {}", q);
-    Response::new(Body::from(body))
+    let secret = s2b("sekr1t");
+    // We actually just hash the filename
+    let expected_sig = hmac_sha1(&secret, &s2b(&file));
+    let good_sig = c31_insecure_compare(&s2b(&sig), &expected_sig);
+    let body = Body::from(format!("file: {}\nsignature: {}\ngood_sig: {}\n", file, sig, good_sig));
+    if good_sig {
+        Response::new(body)
+    } else {
+        Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(body).unwrap()
+    }
 }
 
 pub fn challenge30() {

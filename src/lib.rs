@@ -1,5 +1,5 @@
-#![feature(iterator_step_by)]
-#![feature(extern_prelude)]
+//#![feature(iterator_step_by)]
+//#![feature(extern_prelude)]
 extern crate base64;
 extern crate byteorder;
 extern crate itertools;
