@@ -43,6 +43,14 @@ pub fn hex2bytes(hex_str: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
+pub fn bytes2hex(buf: &[u8]) -> String {
+    // I am not proud
+    let s = format!("{:02x?}", buf);
+    let s = &s[1..s.len()-1];
+    let s = s.replace(", ", "");
+    s.to_string()
+}
+
 pub fn base642bytes(b64str: &[u8]) -> Result<Vec<u8>, String> {
     base64::decode(b64str).map_err(|e| e.to_string())
 }

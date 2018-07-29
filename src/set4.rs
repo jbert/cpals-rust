@@ -16,47 +16,94 @@ use hyper::service::service_fn_ok;
 use hyper::rt::Future;
 
 use std::iter::*;
+use std::time::{Duration, Instant};
 use std::collections::*;
-use std;
+use std::thread::{spawn};
 
 pub fn challenge31() {
 
     let hostport = "127.0.0.1:8080";
-    std::thread::spawn(|| {
+    let server_thread = spawn(move ||{
         let socketaddr = hostport.parse().unwrap();
         let server = Server::bind(&socketaddr)
             .serve(|| service_fn_ok(c31_handler))
             .map_err(|e| eprintln!("server error: {}", e));
-
         hyper::rt::run(server);
     });
 
     let example_file = "badger";
-    let discovered_mac = c31_find_mac_for_file(&example_file, hostport);
-    println!("Discovered mac {} for file {}", b2s(&discovered_mac), example_file);
+    let insecure_msecs = 50;
+    let discovered_mac = &c31_find_mac_for_file(&example_file, hostport, insecure_msecs);
+    println!("Discovered mac {} for file {}", bytes2hex(discovered_mac), example_file);
+
+    let mut resp = c31_check_mac(&example_file, &hostport, &bytes2hex(discovered_mac), true, insecure_msecs);
+    if resp.status() == reqwest::StatusCode::Ok {
+        println!("S4C31 - discoverd mac is good");
+    } else {
+        println!("S4C31 - boo - failed to find mac {}: [{}]", resp.status(), resp.text().unwrap());
+    }
+    let url = format!("http://{}?shutdown=true", hostport);
+    reqwest::get(&url).unwrap();
+    let res = server_thread.join();
+    if res.is_err() {
+        println!("Failed to join: {:?}", res.err().unwrap());
+    }
 }
 
-pub fn c31_find_mac_for_file(fname: &str, hostport: &str) -> Vec<u8> {
-    let base_url = format!("http://{}", hostport);
-    let c = hyper::client::Client::new();
-    let fut = c.get(base_url.parse().unwrap)
-        .and_then(|resp| {
-            println!("Response: {}", resp.status());
-        })
-    println!("JB - resp status {}", resp.status);
-    Vec::new()
+pub fn c31_find_mac_for_file(fname: &str, hostport: &str, insecure_msecs: u64) -> Vec<u8> {
+    let mac_len_bytes = 20;
+
+    let mut guessed_mac = Vec::new();
+    guessed_mac.resize(mac_len_bytes, 0);
+    for i in 0..mac_len_bytes {
+        let start = Instant::now();
+        println!("Trying {}/{}", i+1, mac_len_bytes);
+        let mut slowest_byte = 0;
+        let mut slowest_dur = Duration::new(0,0);
+        for try_byte in 0..=255 {
+            guessed_mac[i] = try_byte;
+            let start = Instant::now();
+            c31_check_mac(fname, hostport, &bytes2hex(&guessed_mac), false, insecure_msecs);
+            let dur = start.elapsed();
+            //            println!("JB - req took {}: {}", dur_to_fsecs(&dur), resp.text().unwrap());
+            if dur > slowest_dur {
+                slowest_dur = dur;
+                slowest_byte = try_byte;
+            }
+        }
+        guessed_mac[i] = slowest_byte;
+        let dur = start.elapsed();
+        println!("Got {}: took {}", bytes2hex(&guessed_mac), dur_to_fsecs(&dur));
+    }
+    guessed_mac
 }
 
-pub fn c31_insecure_compare(xs: &[u8], ys: &[u8]) -> bool {
+pub fn dur_to_fsecs(dur: &Duration) -> f32 {
+    let subsec_millis = dur.subsec_nanos() / 1000000;
+    dur.as_secs() as f32 + (subsec_millis as f32 / 1000.0)
+}
+
+pub fn c31_check_mac(fname: &str, hostport: &str, mac: &str, log_mac: bool, insecure_msecs: u64) -> reqwest::Response {
+    let base_url = format!("http://{}?file={}&signature={}&log_mac={}&insecure_msecs={}", hostport, fname, mac, log_mac, insecure_msecs);
+    //    println!("JB - sending url {}", base_url);
+    reqwest::get(&base_url).unwrap()
+}
+
+pub fn c31_insecure_compare(xs: &[u8], ys: &[u8], insecure_msecs: u64) -> bool {
+    //    let start = Instant::now();
     if xs.len() != ys.len() {
         return false
     }
     for i in 0..xs.len() {
         if xs[i] != ys[i] {
+            //            let dur = start.elapsed();
+            //            println!("JB - compare took: {}", dur_to_fsecs(&dur));
             return false;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(insecure_msecs));
     }
+    //    let dur = start.elapsed();
+    //    println!("JB - compare took: {}", dur_to_millis(&dur));
     return true;
 }
 
@@ -93,6 +140,7 @@ pub fn c31_handler(req: Request<Body>) -> Response<Body> {
     // OK, I give up. Hyper may be in transition (2018/07/19)
     // or I may just be frustrated by docco, but for now I'll assume the
     // whole query string is the mac to verify, rather than "?mac=1234"
+    //    println!("JB - got url: {}", req.uri());
     let q = req.uri().query();
     let q = match q {
         Some(q) => q,
@@ -113,13 +161,37 @@ pub fn c31_handler(req: Request<Body>) -> Response<Body> {
         return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::from("Must supply 'signature' param\n")).unwrap();
     }
     let sig = sig.unwrap();
-    
+    let sig = hex2bytes(&sig);
+    if sig.is_err() {
+        let msg = sig.err().unwrap();
+        return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::from(format!("Bad hex in sig: {}\n", msg))).unwrap();
+    }
+    let sig = sig.unwrap();
+    if sig.len() != 20 {
+        return Response::builder().status(StatusCode::BAD_REQUEST).body(Body::from("'signature' param wrong length\n")).unwrap();
+    }
+    let log_mac = match params.get("log_mac") {
+        None => false,
+        Some(s) => match &s[..] {
+            "true" => true,
+            _ => false,
+        },
+    };
+    let default_insecure_msecs = 50;
+    let insecure_msecs = match params.get("insecure_msecs") {
+        None => default_insecure_msecs,
+        Some(num_str) => num_str.parse().expect("Must provide numeric value"),
+    };
+
     let secret = s2b("sekr1t");
     // We actually just hash the filename
     let expected_sig = hmac_sha1(&secret, &s2b(&file));
-    let good_sig = c31_insecure_compare(&s2b(&sig), &expected_sig);
-    let body = Body::from(format!("file: {}\nsignature: {}\ngood_sig: {}\n", file, sig, good_sig));
-    if good_sig {
+    if log_mac {
+        println!("real mac: {}", bytes2hex(&expected_sig));
+    }
+    let sig_is_good = c31_insecure_compare(&sig, &expected_sig, insecure_msecs);
+    let body = Body::from(format!("file: {}\nsignature: {:x?}\nsig_is_good: {}\nlog_mac: {}\n", file, bytes2hex(&sig), sig_is_good, log_mac));
+    if sig_is_good {
         Response::new(body)
     } else {
         Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(body).unwrap()
@@ -139,7 +211,7 @@ pub fn challenge30() {
         "S4C30 - We have a valid params (len {}) which gives admin: {:?}",
         params.len(),
         result
-    );
+        );
 
     let attack_suffix = s2b(";admin=true");
     let s = c30_md4_hash_to_state(&mac);
@@ -168,18 +240,18 @@ pub fn challenge30() {
                 println!(
                     "S4C30 - got admin params with a good mac (guessed key len {})",
                     guessed_key_len
-                );
+                    );
                 break;
             } else {
                 println!("S4C30 - wtf!? got a good mac but no admin?");
                 break;
             },
-            Err(err_str) => {
-                println!(
-                    "S4C30 - guess len [{}] failed with: {}",
-                    guessed_key_len, err_str
-                );
-            }
+                Err(err_str) => {
+                    println!(
+                        "S4C30 - guess len [{}] failed with: {}",
+                        guessed_key_len, err_str
+                        );
+                }
         }
     }
 }
@@ -232,7 +304,7 @@ pub fn c30_validated_url_str_is_admin(
     key: &[u8],
     params: &[u8],
     mac: &[u8],
-) -> Result<bool, String> {
+    ) -> Result<bool, String> {
     let check_mac = c30_mac(key, params);
     if check_mac != mac.to_vec() {
         return Err("Invalid mac".to_string());
@@ -246,8 +318,8 @@ pub fn c30_mac(key: &[u8], msg: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&key);
     buf.extend_from_slice(&msg);
-    
-md4(&buf)
+
+    md4(&buf)
 }
 
 pub fn md4(buf: &[u8]) -> Vec<u8> {
@@ -270,7 +342,7 @@ pub fn challenge29() {
         "S4C29 - We have a valid params (len {}) which gives admin: {:?}",
         params.len(),
         result
-    );
+        );
 
     let attack_suffix = s2b(";admin=true");
     let s = c29_split_sha1_hash(&mac);
@@ -293,7 +365,7 @@ pub fn challenge29() {
             s[2],
             s[3],
             s[4],
-        ) {
+            ) {
             Ok(am) => am,
             Err(err_str) => {
                 println!("sha1 failed (bad length?) : {:?}", err_str);
@@ -306,18 +378,18 @@ pub fn challenge29() {
                 println!(
                     "S4C29 - got admin params with a good mac (guessed key len {})",
                     guessed_key_len
-                );
+                    );
                 break;
             } else {
                 println!("S4C29 - wtf!? got a good mac but no admin?");
                 break;
             },
-            Err(err_str) => {
-                println!(
-                    "S4C29 - guess len [{}] failed with: {}",
-                    guessed_key_len, err_str
-                );
-            }
+                Err(err_str) => {
+                    println!(
+                        "S4C29 - guess len [{}] failed with: {}",
+                        guessed_key_len, err_str
+                        );
+                }
         }
     }
 }
@@ -332,7 +404,7 @@ pub fn c29_validated_url_str_is_admin(
     key: &[u8],
     params: &[u8],
     mac: &[u8],
-) -> Result<bool, String> {
+    ) -> Result<bool, String> {
     let check_mac = c28_mac(key, params);
     if check_mac != mac.to_vec() {
         return Err("Invalid mac".to_string());
@@ -465,7 +537,7 @@ pub fn c26_decryptor_helper(
     key: &[u8],
     nonce: u64,
     cipher_text: &[u8],
-) -> Result<bool, String> {
+    ) -> Result<bool, String> {
     let plain_text = aes128_ctr_cryptor(&key, nonce, &cipher_text);
     // Keep only ascii chars
     let plain_text = plain_text
@@ -491,7 +563,7 @@ pub fn c26_encryptor_helper(key: &[u8], nonce: u64, user_data: &[u8]) -> Vec<u8>
     assert!(
         key.len() == block_size,
         format!("AES128 requires {} byte key", block_size)
-    );
+        );
 
     // Escape special chars
     let user_data = &b2s(user_data).replace(";", "%3b").replace("=", "%3d");
@@ -523,7 +595,7 @@ pub fn challenge25() {
         nonce,
         0,
         &chosen_plain_text,
-    );
+        );
     // Huh. That's just the key.
     let recovered_plain_text = xor_buf(&editable_cipher_text, &original_cipher_text).unwrap();
     println!("JB ct len {}", b2s(&recovered_plain_text));
@@ -535,7 +607,7 @@ pub fn c25_aes128_ctr_seek_edit(
     nonce: u64,
     offset: usize,
     new_text: &[u8],
-) -> Option<String> {
+    ) -> Option<String> {
     let key_stream_for_block = |i_block: u64| {
         let mut v = Vec::new();
         v.write_u64::<LittleEndian>(nonce).unwrap();
