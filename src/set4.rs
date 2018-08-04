@@ -19,6 +19,112 @@ use std::iter::*;
 use std::time::{Duration, Instant};
 use std::collections::*;
 use std::thread::{spawn};
+use std::io::Write;
+
+pub fn challenge32() {
+    let hostport = "127.0.0.1:8080";
+    let server_thread = spawn(move ||{
+        let socketaddr = hostport.parse().unwrap();
+        let server = Server::bind(&socketaddr)
+            .serve(|| service_fn_ok(c31_handler))
+            .map_err(|e| eprintln!("server error: {}", e));
+        hyper::rt::run(server);
+    });
+
+    let example_file = "badger";
+    let insecure_msecs = 5;
+    let mut dummy_mac = Vec::new();
+    dummy_mac.resize(20, 0);
+    let rq = reqwest::Client::new();
+    c31_check_mac(&rq, &example_file, &hostport, &bytes2hex(&dummy_mac), true, insecure_msecs);
+    let discovered_mac = &c32_find_mac_for_file(&example_file, hostport, insecure_msecs);
+    println!("Discovered mac {} for file {}", bytes2hex(discovered_mac), example_file);
+
+    let mut resp = c31_check_mac(&rq, &example_file, &hostport, &bytes2hex(discovered_mac), true, insecure_msecs);
+    if resp.status() == reqwest::StatusCode::Ok {
+        println!("S4C32 - discoverd mac is good");
+    } else {
+        println!("S4C32 - boo - failed to find mac {}: [{}]", resp.status(), resp.text().unwrap());
+    }
+    let url = format!("http://{}?shutdown=true", hostport);
+    reqwest::get(&url).unwrap();
+    let res = server_thread.join();
+    if res.is_err() {
+        println!("Failed to join: {:?}", res.err().unwrap());
+    }
+}
+
+pub fn c32_find_mac_for_file(fname: &str, hostport: &str, insecure_msecs: u64) -> Vec<u8> {
+    let mac_len_bytes = 20;
+    let num_retry_times = 5;
+
+
+    let mut guessed_mac = Vec::new();
+    guessed_mac.resize(mac_len_bytes, 0);
+
+    let mut byte_fsecs = Vec::new();
+    byte_fsecs.resize(mac_len_bytes, 0.0);
+
+    let rq = reqwest::Client::new();
+
+    let mut i = 0;
+    while i < mac_len_bytes {
+        let start = Instant::now();
+        println!("Trying {}/{}", i+1, mac_len_bytes);
+        // We can't detect problems on 1st 2 runs, so do more iterations
+        let num_retry_times = num_retry_times * if i < 2 { 4 } else { 1 };
+
+        let num_tests = 256 * num_retry_times;
+        let mut slowest_byte = 0;
+        let mut slowest_dur = Duration::new(0,0);
+
+        // Try each byte
+        for try_byte in 0..=255 {
+            guessed_mac[i] = try_byte;
+            
+            // We might be slow for various reasons
+            // What counts is the quickest we can do it. Find that.
+            let mut quickest_dur = Duration::new(5000,0);   // Bigger than anything
+            for _ in 0..num_retry_times {
+                let start = Instant::now();
+                c31_check_mac(&rq, fname, hostport, &bytes2hex(&guessed_mac), false, insecure_msecs);
+                let dur = start.elapsed();
+                if dur < quickest_dur {
+                    quickest_dur = dur;
+                }
+//                println!("Client: req {}", dur_to_fsecs(&dur));
+            }
+
+            // If our quickest run is slower than the slowest so far
+            // then this byte is our best candidate
+            if quickest_dur > slowest_dur {
+                slowest_dur = quickest_dur;
+                slowest_byte = try_byte;
+            }
+            print!("\r{} / {}", (try_byte as u32+1) * num_retry_times, num_tests);
+            std::io::stdout().flush().ok().expect("Could not flush stdout");
+        }
+        print!("\n");
+        guessed_mac[i] = slowest_byte;
+        byte_fsecs[i] = dur_to_fsecs(&start.elapsed()) / num_retry_times as f32;
+        println!("Got {}: took {} ({})", bytes2hex(&guessed_mac), byte_fsecs[i] * num_retry_times as f32, byte_fsecs[i]);
+
+        if i > 1 {
+            let prev_delta = byte_fsecs[i-1] - byte_fsecs[i-2];
+            let this_delta = byte_fsecs[i] - byte_fsecs[i-1];
+            let mut ratio = this_delta / prev_delta;
+            if ratio > 1.0 {
+                ratio = 1.0 / ratio;
+            }
+            println!("this {} last {} prev {} : t_d {} p_d {} : ratio {}", byte_fsecs[i], byte_fsecs[i-1], byte_fsecs[i-2], this_delta, prev_delta, ratio);
+            if this_delta < 0.0 || ratio < 0.5 {
+                continue // Don't increment i
+            }
+        }
+        i = i + 1;
+    }
+    guessed_mac
+}
 
 pub fn challenge31() {
 
@@ -36,7 +142,8 @@ pub fn challenge31() {
     let discovered_mac = &c31_find_mac_for_file(&example_file, hostport, insecure_msecs);
     println!("Discovered mac {} for file {}", bytes2hex(discovered_mac), example_file);
 
-    let mut resp = c31_check_mac(&example_file, &hostport, &bytes2hex(discovered_mac), true, insecure_msecs);
+    let rq = reqwest::Client::new();
+    let mut resp = c31_check_mac(&rq, &example_file, &hostport, &bytes2hex(discovered_mac), true, insecure_msecs);
     if resp.status() == reqwest::StatusCode::Ok {
         println!("S4C31 - discoverd mac is good");
     } else {
@@ -63,7 +170,8 @@ pub fn c31_find_mac_for_file(fname: &str, hostport: &str, insecure_msecs: u64) -
         for try_byte in 0..=255 {
             guessed_mac[i] = try_byte;
             let start = Instant::now();
-            c31_check_mac(fname, hostport, &bytes2hex(&guessed_mac), false, insecure_msecs);
+            let rq = reqwest::Client::new();
+            c31_check_mac(&rq, fname, hostport, &bytes2hex(&guessed_mac), false, insecure_msecs);
             let dur = start.elapsed();
             //            println!("JB - req took {}: {}", dur_to_fsecs(&dur), resp.text().unwrap());
             if dur > slowest_dur {
@@ -79,14 +187,15 @@ pub fn c31_find_mac_for_file(fname: &str, hostport: &str, insecure_msecs: u64) -
 }
 
 pub fn dur_to_fsecs(dur: &Duration) -> f32 {
-    let subsec_millis = dur.subsec_nanos() / 1000000;
-    dur.as_secs() as f32 + (subsec_millis as f32 / 1000.0)
+    let subsec_micros = dur.subsec_nanos() / 1000;
+    dur.as_secs() as f32 + (subsec_micros as f32 / 1000000.0)
 }
 
-pub fn c31_check_mac(fname: &str, hostport: &str, mac: &str, log_mac: bool, insecure_msecs: u64) -> reqwest::Response {
+pub fn c31_check_mac(rq: &reqwest::Client, fname: &str, hostport: &str, mac: &str, log_mac: bool, insecure_msecs: u64) -> reqwest::Response {
     let base_url = format!("http://{}?file={}&signature={}&log_mac={}&insecure_msecs={}", hostport, fname, mac, log_mac, insecure_msecs);
     //    println!("JB - sending url {}", base_url);
-    reqwest::get(&base_url).unwrap()
+//    rq.get(&base_url).unwrap()
+    rq.get(&base_url).send().unwrap()
 }
 
 pub fn c31_insecure_compare(xs: &[u8], ys: &[u8], insecure_msecs: u64) -> bool {
@@ -137,10 +246,7 @@ pub fn hmac_sha1(key: &[u8], msg: &[u8]) -> Vec<u8> {
 }
 
 pub fn c31_handler(req: Request<Body>) -> Response<Body> {
-    // OK, I give up. Hyper may be in transition (2018/07/19)
-    // or I may just be frustrated by docco, but for now I'll assume the
-    // whole query string is the mac to verify, rather than "?mac=1234"
-    //    println!("JB - got url: {}", req.uri());
+    let start = Instant::now();
     let q = req.uri().query();
     let q = match q {
         Some(q) => q,
@@ -191,6 +297,8 @@ pub fn c31_handler(req: Request<Body>) -> Response<Body> {
     }
     let sig_is_good = c31_insecure_compare(&sig, &expected_sig, insecure_msecs);
     let body = Body::from(format!("file: {}\nsignature: {:x?}\nsig_is_good: {}\nlog_mac: {}\n", file, bytes2hex(&sig), sig_is_good, log_mac));
+//    println!("Handler: {}", dur_to_fsecs(&start.elapsed()));
+        
     if sig_is_good {
         Response::new(body)
     } else {

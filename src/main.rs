@@ -24,8 +24,7 @@ fn main() {
     cpals::set4::challenge28();
     cpals::set4::challenge29();
     cpals::set4::challenge30();
-       */
     cpals::set4::challenge31();
-//    let v = vec![1, 2, 3, 4];
-//    println!("hex is {}", cpals::convert::bytes2hex(&v));
+       */
+    cpals::set4::challenge32();
 }
