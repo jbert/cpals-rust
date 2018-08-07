@@ -31,6 +31,7 @@ pub fn hex2bytes(hex_str: &str) -> Result<Vec<u8>, String> {
     // Get iterator of nibbles-or-errors
     hex_str
         .chars()
+        .filter(|&b| b != '\n')
         .map(hexchar2nibble)
         .batching(|it| match it.next() {
             None => None,

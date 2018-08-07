@@ -14,6 +14,7 @@ extern crate fake_simd as simd;
 
 extern crate hyper;
 extern crate reqwest;
+extern crate num;
 
 mod md4;
 mod sha1;
@@ -23,8 +24,7 @@ pub mod set1;
 pub mod set2;
 pub mod set3;
 pub mod set4;
-
+pub mod set5;
 
 #[cfg(test)]
 mod tests;
-

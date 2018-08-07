@@ -627,11 +627,11 @@ pub fn aes128_cbc_encode(key: &[u8], iv: &[u8], plain_text: &[u8]) -> Vec<u8> {
     let block_size = 16;
     assert!(
         key.len() == block_size,
-        format!("AES128 requires {} byte key", block_size)
+        format!("AES128 requires {} byte key (not {})", block_size, key.len())
     );
     assert!(
         iv.len() == block_size,
-        format!("AES128 requires {} byte iv", block_size)
+        format!("AES128 requires {} byte iv (not {})", block_size, iv.len())
     );
 
     // CBC consumes previous ciphertext blocks, prepended with the IV

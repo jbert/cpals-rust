@@ -18,7 +18,7 @@ use hyper::rt::Future;
 use std::iter::*;
 use std::time::{Duration, Instant};
 use std::collections::*;
-use std::thread::{spawn};
+use std::thread::spawn;
 use std::io::Write;
 
 pub fn challenge32() {
@@ -246,7 +246,6 @@ pub fn hmac_sha1(key: &[u8], msg: &[u8]) -> Vec<u8> {
 }
 
 pub fn c31_handler(req: Request<Body>) -> Response<Body> {
-    let start = Instant::now();
     let q = req.uri().query();
     let q = match q {
         Some(q) => q,
@@ -297,7 +296,6 @@ pub fn c31_handler(req: Request<Body>) -> Response<Body> {
     }
     let sig_is_good = c31_insecure_compare(&sig, &expected_sig, insecure_msecs);
     let body = Body::from(format!("file: {}\nsignature: {:x?}\nsig_is_good: {}\nlog_mac: {}\n", file, bytes2hex(&sig), sig_is_good, log_mac));
-//    println!("Handler: {}", dur_to_fsecs(&start.elapsed()));
         
     if sig_is_good {
         Response::new(body)
