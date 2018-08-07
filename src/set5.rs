@@ -7,6 +7,18 @@ use byteorder::{BigEndian, WriteBytesExt};
 use num::bigint::{BigUint, RandBigInt, ToBigUint};
 use rand::Rng;
 
+/* 
+struct DH_MITM<'a> {
+    bob: &'a DH,
+}
+
+impl<'a> DH_MITM<'a> {
+    fn new(bob: &DH) -> &'a DH_MITM {
+        &DH_MITM{bob: bob}
+    }
+}
+*/
+
 #[derive(Default)]
 struct DH {
     p: BigUint,
@@ -44,19 +56,24 @@ impl DH {
         h[0..16].to_vec()
     }
     
-    pub fn send_msg(&mut self, them: &mut DH, msg: &[u8]) {
+    pub fn send_msg(&mut self, them: &mut DH, msg: &[u8]) -> bool {
         them.init(&self.p, &self.g);
         self.their_pubkey = them.swap_pub_key(&self.my_pubkey).clone();
         let key = self.derive_key();
         let iv = get_random_bytes(16);
         let cipher_text = aes128_cbc_encode(&key, &iv, &msg);
-        them.accept_msg(&iv, &cipher_text);
+        let (return_iv, return_cipher_text) = them.accept_and_reply_to_msg(&iv, &cipher_text);
+        let return_msg = aes128_cbc_decode(&key, &return_iv, &return_cipher_text);
+        msg.to_vec() == return_msg
     }
 
-    fn accept_msg(&mut self, iv: &[u8], cipher_text: &[u8]) {
+    fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>) {
         println!("S5C34 - bob sees [{}]", bytes2hex(&cipher_text));
-        let key = self.derive_key();
-        self.received_msg = aes128_cbc_decode(&key, iv, cipher_text)
+        let key = self.derive_key(); 
+        self.received_msg = aes128_cbc_decode(&key, iv, cipher_text);
+        let return_iv = get_random_bytes(16);
+        let return_cipher_text = aes128_cbc_encode(&key, &return_iv, &self.received_msg);
+        (return_iv, return_cipher_text)
     }
 
     pub fn received_msg(&self) -> Vec<u8> {
@@ -76,14 +93,34 @@ fffffffffffff";
 pub fn challenge34() {
     let p = BigUint::from_bytes_be(&hex2bytes(DH::P_NIST_HEX_STR).expect("Decode hex failed"));
     let g = 2.to_biguint().unwrap();
-    let mut alice = DH::new();
-    let mut bob = DH::new();
-    alice.init(&p, &g);
-    let msg = s2b("hello, there");
-    alice.send_msg(&mut bob, &msg);
-    println!("S5C34 - alice send : [{}]", b2s(&msg));
-    assert_eq!(&bob.received_msg(), &msg, "Bob receives the message!");
-    println!("S5C34 - bob receive: [{}]", b2s(&bob.received_msg()));
+    {
+        let mut alice = DH::new();
+        let mut bob = DH::new();
+        alice.init(&p, &g);
+        let msg = s2b("hello, there");
+        println!("S5C34 - alice send : [{}]", b2s(&msg));
+        let reply_good = alice.send_msg(&mut bob, &msg);
+        assert!(reply_good, "alice received the correct reply");
+        assert_eq!(&bob.received_msg(), &msg, "Bob receives the message!");
+        println!("S5C34 - bob receive: [{}]", b2s(&bob.received_msg()));
+        println!("S5C34 - alice got correct reply?: {}", reply_good);
+    }
+    /*
+    {
+        let mut alice = DH::new();
+        let mut bob = DH::new();
+        let mut mitm = DH_MITM::new(&bob);
+        alice.init(&p, &g);
+        let msg = s2b("hello, there");
+        alice.send_msg(&mut mitm, &msg);
+        println!("S5C34 - alice send : [{}]", b2s(&msg));
+        assert_eq!(&bob.received_msg(), &msg, "Bob receives the message!");
+        println!("S5C34 - bob receive: [{}]", b2s(&bob.received_msg()));
+        assert_eq!(&mitm.received_msg(), &msg, "mitm also receives the message!");
+        println!("S5C34 - mitm receive: [{}]", b2s(&bob.received_msg()));
+    }
+    */
+
 }
 
 pub fn challenge33() {
