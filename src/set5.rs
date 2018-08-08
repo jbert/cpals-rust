@@ -6,9 +6,15 @@ use byteorder::{BigEndian, WriteBytesExt};
 use num::bigint::{BigUint, RandBigInt, ToBigUint};
 use rand::Rng;
 
+// S5C35
+// g = 1 => g^k == 1 for all k, so secret key is 1
+// g = p => g = 0 (mod p) => g ^k = 0 for all k, so secret key is 0
+// g = p-1 => g = -1 mod p => g^k = +1 if k even, -1 if k odd. So two possibilities for secret key
+//  ... we don't know privkey, but can try both and see which is likely english
+
 pub trait DHServer {
     fn init(&mut self, p: &BigUint, g: &BigUint);
-    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> &BigUint;
+    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> BigUint;
     fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>);
     fn received_msg(&mut self) -> Vec<u8>;
 }
@@ -26,15 +32,24 @@ pub trait DHServer {
 // 
 struct DHMitm<'a> {
     bob: &'a mut DH,
+    decryptor: fn(&[u8], &[u8]) -> Vec<u8>,
+    pubkey_replacer: fn(&BigUint, &BigUint) -> BigUint,
+    generator_replacer: fn(&BigUint) -> BigUint,
 
     p: BigUint,
     g: BigUint,
 }
 
 impl<'a> DHMitm<'a> {
-    fn new(bob: &'a mut DH) -> DHMitm {
+    fn new(bob: &'a mut DH,
+           decryptor: fn(&[u8], &[u8]) -> Vec<u8>,
+           pubkey_replacer: fn(&BigUint, &BigUint) -> BigUint,
+           generator_replacer: fn(&BigUint) -> BigUint) -> DHMitm {
         let mitm = DHMitm{
             bob: bob,
+            decryptor: decryptor,
+            pubkey_replacer: pubkey_replacer,
+            generator_replacer: generator_replacer,
             p: 0.to_biguint().unwrap(),
             g: 0.to_biguint().unwrap(),
         };
@@ -45,26 +60,39 @@ impl<'a> DHMitm<'a> {
         self.bob.received_msg()
     }
 
-    fn decrypt_with_zero_key(&self, iv: &[u8], buf: &[u8]) -> Vec<u8> {
-        let h = sha1(&0.to_biguint().unwrap().to_bytes_be());
-        let zero_key = h[0..16].to_vec();
-        aes128_cbc_decode(&zero_key, iv, buf)
-    }
+}
 
+fn decrypt_with_zero_key(iv: &[u8], buf: &[u8]) -> Vec<u8> {
+    let h = sha1(&0.to_biguint().unwrap().to_bytes_be());
+    let zero_key = h[0..16].to_vec();
+    aes128_cbc_decode(&zero_key, iv, buf)
+}
+
+fn keep_generator(g: &BigUint) -> BigUint {
+    g.clone()
+}
+
+fn replace_pubkey_with_p(_pubkey: &BigUint, p: &BigUint) -> BigUint {
+    p.clone()
+}
+
+fn keep_pubkey(pubkey: &BigUint, _p: &BigUint) -> BigUint {
+    pubkey.clone()
 }
 
 impl<'a> DHServer for DHMitm<'a> {
     fn init(&mut self, p: &BigUint, g: &BigUint) {
         self.p = p.clone();
-        self.g = g.clone();
+        self.g = (self.generator_replacer)(g);
         self.bob.init(p, g)
     }
 
-    fn swap_pub_key(&mut self, _their_pubkey: &BigUint) -> &BigUint {
+    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> BigUint {
         // Tee hee - we tell bob that Alice's pubkey is p. Mwahahaha.
-        self.bob.swap_pub_key(&self.p); // We don't care what Bob's real pubkey is
+        let replaced_pubkey = (self.pubkey_replacer)(their_pubkey, &self.p);
+        let bob_pubkey = self.bob.swap_pub_key(&replaced_pubkey);
         // And we tell Alice that bob's pubkey is also p. Tee hee.
-        &self.p
+        (self.pubkey_replacer)(&bob_pubkey, &self.p)
     }
     fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>) {
         // So, we told Bob that Alice's pubkey was p
@@ -72,10 +100,10 @@ impl<'a> DHServer for DHMitm<'a> {
         // let s = p.modpow(bob_privkey, &self.p); == p^k mod p == (p mod p)^k == 0
         // i.e. the zero key
 
-        let plain_text = self.decrypt_with_zero_key(iv, cipher_text);
+        let plain_text = (self.decryptor)(iv, cipher_text);
         println!("S5C34 - mitm can zero decrypt to see: [{}]", b2s(&plain_text));
         let (reply_iv, reply_cipher_text) = self.bob.accept_and_reply_to_msg(iv, cipher_text);
-        let reply_plain_text = self.decrypt_with_zero_key(&reply_iv, &reply_cipher_text);
+        let reply_plain_text = (self.decryptor)(&reply_iv, &reply_cipher_text);
         println!("S5C34 - mitm can zero decrypt to see: [{}]", b2s(&reply_plain_text));
         (reply_iv, reply_cipher_text)
     }
@@ -107,9 +135,9 @@ impl DHServer for DH {
         self.my_pubkey = g.modpow(&self.my_privkey, &p);
     }
 
-    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> &BigUint {
+    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> BigUint {
         self.their_pubkey = their_pubkey.clone();
-        &self.my_pubkey
+        self.my_pubkey.clone()
     }
 
     fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -177,7 +205,7 @@ pub fn challenge34() {
     {
         let mut alice = DH::new();
         let mut bob = DH::new();
-        let mut mitm = DHMitm::new(&mut bob);
+        let mut mitm = DHMitm::new(&mut bob, decrypt_with_zero_key, replace_pubkey_with_p, keep_generator);
         alice.init(&p, &g);
         let msg = s2b("hello, there - Mr Who?");
         println!("S5C34 - alice send via mitm: [{}]", b2s(&msg));
