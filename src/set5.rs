@@ -29,8 +29,6 @@ struct DHMitm<'a> {
 
     p: BigUint,
     g: BigUint,
-
-    bob_pubkey: BigUint,
 }
 
 impl<'a> DHMitm<'a> {
@@ -39,7 +37,6 @@ impl<'a> DHMitm<'a> {
             bob: bob,
             p: 0.to_biguint().unwrap(),
             g: 0.to_biguint().unwrap(),
-            bob_pubkey: 0.to_biguint().unwrap(),
         };
         mitm
     }
@@ -65,7 +62,7 @@ impl<'a> DHServer for DHMitm<'a> {
 
     fn swap_pub_key(&mut self, _their_pubkey: &BigUint) -> &BigUint {
         // Tee hee - we tell bob that Alice's pubkey is p. Mwahahaha.
-        self.bob_pubkey = self.bob.swap_pub_key(&self.p).clone();
+        self.bob.swap_pub_key(&self.p); // We don't care what Bob's real pubkey is
         // And we tell Alice that bob's pubkey is also p. Tee hee.
         &self.p
     }
