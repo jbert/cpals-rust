@@ -1,4 +1,3 @@
-//use rand::Rng;
 use sha1::*;
 use util::*;
 use set2::*;
@@ -7,17 +6,87 @@ use byteorder::{BigEndian, WriteBytesExt};
 use num::bigint::{BigUint, RandBigInt, ToBigUint};
 use rand::Rng;
 
-/* 
-struct DH_MITM<'a> {
-    bob: &'a DH,
+pub trait DHServer {
+    fn init(&mut self, p: &BigUint, g: &BigUint);
+    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> &BigUint;
+    fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>);
+    fn received_msg(&mut self) -> Vec<u8>;
 }
 
-impl<'a> DH_MITM<'a> {
-    fn new(bob: &DH) -> &'a DH_MITM {
-        &DH_MITM{bob: bob}
+// Don't know why I can't derive default here. I get:
+// error[E0277]: the trait bound `&mut set5::DH: std::default::Default` is not satisfied
+//   --> src/set5.rs:18:5
+//    |
+// 18 |     bob: &'a mut DH,
+//    |     ^^^^^^^^^^^^^^^ the trait `std::default::Default` is not implemented for `&mut set5::DH`
+//    |
+//    = help: the following implementations were found:
+//              <set5::DH as std::default::Default>
+//    = note: required by `std::default::Default::default`
+// 
+struct DHMitm<'a> {
+    bob: &'a mut DH,
+
+    p: BigUint,
+    g: BigUint,
+
+    bob_pubkey: BigUint,
+}
+
+impl<'a> DHMitm<'a> {
+    fn new(bob: &'a mut DH) -> DHMitm {
+        let mitm = DHMitm{
+            bob: bob,
+            p: 0.to_biguint().unwrap(),
+            g: 0.to_biguint().unwrap(),
+            bob_pubkey: 0.to_biguint().unwrap(),
+        };
+        mitm
+    }
+
+    fn bob_received_msg(&mut self) -> Vec<u8> {
+        self.bob.received_msg()
+    }
+
+    fn decrypt_with_zero_key(&self, iv: &[u8], buf: &[u8]) -> Vec<u8> {
+        let h = sha1(&0.to_biguint().unwrap().to_bytes_be());
+        let zero_key = h[0..16].to_vec();
+        aes128_cbc_decode(&zero_key, iv, buf)
+    }
+
+}
+
+impl<'a> DHServer for DHMitm<'a> {
+    fn init(&mut self, p: &BigUint, g: &BigUint) {
+        self.p = p.clone();
+        self.g = g.clone();
+        self.bob.init(p, g)
+    }
+
+    fn swap_pub_key(&mut self, _their_pubkey: &BigUint) -> &BigUint {
+        // Tee hee - we tell bob that Alice's pubkey is p. Mwahahaha.
+        self.bob_pubkey = self.bob.swap_pub_key(&self.p).clone();
+        // And we tell Alice that bob's pubkey is also p. Tee hee.
+        &self.p
+    }
+    fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        // So, we told Bob that Alice's pubkey was p
+        // So bob will have calcualated session as:
+        // let s = p.modpow(bob_privkey, &self.p); == p^k mod p == (p mod p)^k == 0
+        // i.e. the zero key
+
+        let plain_text = self.decrypt_with_zero_key(iv, cipher_text);
+        println!("S5C34 - mitm can zero decrypt to see: [{}]", b2s(&plain_text));
+        let (reply_iv, reply_cipher_text) = self.bob.accept_and_reply_to_msg(iv, cipher_text);
+        let reply_plain_text = self.decrypt_with_zero_key(&reply_iv, &reply_cipher_text);
+        println!("S5C34 - mitm can zero decrypt to see: [{}]", b2s(&reply_plain_text));
+        (reply_iv, reply_cipher_text)
+    }
+
+    fn received_msg(&mut self) -> Vec<u8> {
+        self.bob.received_msg()
     }
 }
-*/
 
 #[derive(Default)]
 struct DH {
@@ -32,12 +101,8 @@ struct DH {
     received_msg: Vec<u8>,
 }
 
-impl DH {
-    pub fn new() -> DH {
-        DH::default()
-    }
-
-    pub fn init(&mut self, p: &BigUint, g: &BigUint) {
+impl DHServer for DH {
+    fn init(&mut self, p: &BigUint, g: &BigUint) {
         let mut rng = rand::thread_rng();
         self.p = p.clone();
         self.g = g.clone();
@@ -45,26 +110,9 @@ impl DH {
         self.my_pubkey = g.modpow(&self.my_privkey, &p);
     }
 
-    pub fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> &BigUint {
+    fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> &BigUint {
         self.their_pubkey = their_pubkey.clone();
         &self.my_pubkey
-    }
-
-    fn derive_key(&self) -> Vec<u8> {
-        let s = self.their_pubkey.modpow(&self.my_privkey, &self.p);
-        let h = sha1(&s.to_bytes_be());
-        h[0..16].to_vec()
-    }
-    
-    pub fn send_msg(&mut self, them: &mut DH, msg: &[u8]) -> bool {
-        them.init(&self.p, &self.g);
-        self.their_pubkey = them.swap_pub_key(&self.my_pubkey).clone();
-        let key = self.derive_key();
-        let iv = get_random_bytes(16);
-        let cipher_text = aes128_cbc_encode(&key, &iv, &msg);
-        let (return_iv, return_cipher_text) = them.accept_and_reply_to_msg(&iv, &cipher_text);
-        let return_msg = aes128_cbc_decode(&key, &return_iv, &return_cipher_text);
-        msg.to_vec() == return_msg
     }
 
     fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -76,8 +124,32 @@ impl DH {
         (return_iv, return_cipher_text)
     }
 
-    pub fn received_msg(&self) -> Vec<u8> {
+    fn received_msg(&mut self) -> Vec<u8> {
         self.received_msg.clone()
+    }
+
+}
+
+impl DH {
+    pub fn new() -> DH {
+        DH::default()
+    }
+
+    fn derive_key(&self) -> Vec<u8> {
+        let s = self.their_pubkey.modpow(&self.my_privkey, &self.p);
+        let h = sha1(&s.to_bytes_be());
+        h[0..16].to_vec()
+    }
+    
+    pub fn send_msg(&mut self, them: &mut DHServer, msg: &[u8]) -> bool {
+        them.init(&self.p, &self.g);
+        self.their_pubkey = them.swap_pub_key(&self.my_pubkey).clone();
+        let key = self.derive_key();
+        let iv = get_random_bytes(16);
+        let cipher_text = aes128_cbc_encode(&key, &iv, &msg);
+        let (return_iv, return_cipher_text) = them.accept_and_reply_to_msg(&iv, &cipher_text);
+        let return_msg = aes128_cbc_decode(&key, &return_iv, &return_cipher_text);
+        msg.to_vec() == return_msg
     }
 
     const P_NIST_HEX_STR: &'static str = "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024
@@ -105,21 +177,18 @@ pub fn challenge34() {
         println!("S5C34 - bob receive: [{}]", b2s(&bob.received_msg()));
         println!("S5C34 - alice got correct reply?: {}", reply_good);
     }
-    /*
     {
         let mut alice = DH::new();
         let mut bob = DH::new();
-        let mut mitm = DH_MITM::new(&bob);
+        let mut mitm = DHMitm::new(&mut bob);
         alice.init(&p, &g);
-        let msg = s2b("hello, there");
-        alice.send_msg(&mut mitm, &msg);
-        println!("S5C34 - alice send : [{}]", b2s(&msg));
-        assert_eq!(&bob.received_msg(), &msg, "Bob receives the message!");
-        println!("S5C34 - bob receive: [{}]", b2s(&bob.received_msg()));
-        assert_eq!(&mitm.received_msg(), &msg, "mitm also receives the message!");
-        println!("S5C34 - mitm receive: [{}]", b2s(&bob.received_msg()));
+        let msg = s2b("hello, there - Mr Who?");
+        println!("S5C34 - alice send via mitm: [{}]", b2s(&msg));
+        let reply_good = alice.send_msg(&mut mitm, &msg);
+        assert!(reply_good, "alice received the correct reply");
+        println!("S5C34 - mitm says bob receive: [{}]", b2s(&mitm.bob_received_msg()));
+        println!("S5C34 - alice got correct reply?: {}", reply_good);
     }
-    */
 
 }
 
