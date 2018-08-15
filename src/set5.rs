@@ -7,10 +7,41 @@ use num::bigint::{BigUint, RandBigInt, ToBigUint};
 use rand::Rng;
 
 // S5C35
-// g = 1 => g^k == 1 for all k, so secret key is 1
+// Bob sees g = 1:
+//  So B == 1 and b == 1
+// 
 // g = p => g = 0 (mod p) => g ^k = 0 for all k, so secret key is 0
 // g = p-1 => g = -1 mod p => g^k = +1 if k even, -1 if k odd. So two possibilities for secret key
 //  ... we don't know privkey, but can try both and see which is likely english
+pub fn challenge35() {
+    let p = BigUint::from_bytes_be(&hex2bytes(DH::P_NIST_HEX_STR).expect("Decode hex failed"));
+    let g = 2.to_biguint().unwrap();
+
+    {
+        let mut alice = DH::new("alice");
+        let mut bob = DH::new("bob");
+        let mut mitm = DHMitm::new(&mut bob, decrypt_with_one_key, keep_pubkey, replace_generator_with_one);
+        //    let mut mitm = DHMitm::new(&mut bob, decrypt_with_zero_key, replace_pubkey_with_p, keep_generator);
+        alice.init(&p, &g);
+        let msg = s2b("hello, there - Mr Who?");
+        println!("S5C35 - alice send via mitm: [{}]", b2s(&msg));
+        let reply_good = alice.send_msg(&mut mitm, &msg);
+        assert!(reply_good, "alice received the correct reply");
+        println!("S5C35 - mitm says bob receive: [{}]", b2s(&mitm.bob_received_msg()));
+        println!("S5C35 - alice got correct reply?: {}", reply_good);
+    }
+}
+
+fn decrypt_with_one_key(iv: &[u8], buf: &[u8]) -> Vec<u8> {
+    let h = sha1(&1.to_biguint().unwrap().to_bytes_be());
+    let key = h[0..16].to_vec();
+    aes128_cbc_decode(&key, iv, buf)
+}
+
+fn replace_generator_with_one(_g: &BigUint) -> BigUint {
+    1.to_biguint().unwrap()
+}
+
 
 pub trait DHServer {
     fn init(&mut self, p: &BigUint, g: &BigUint);
@@ -84,7 +115,7 @@ impl<'a> DHServer for DHMitm<'a> {
     fn init(&mut self, p: &BigUint, g: &BigUint) {
         self.p = p.clone();
         self.g = (self.generator_replacer)(g);
-        self.bob.init(p, g)
+        self.bob.init(&self.p, &self.g)
     }
 
     fn swap_pub_key(&mut self, their_pubkey: &BigUint) -> BigUint {
@@ -101,10 +132,10 @@ impl<'a> DHServer for DHMitm<'a> {
         // i.e. the zero key
 
         let plain_text = (self.decryptor)(iv, cipher_text);
-        println!("S5C34 - mitm can zero decrypt to see: [{}]", b2s(&plain_text));
+        println!("S5C34/35 - mitm can snoop decrypt to see: [{}]", b2s(&plain_text));
         let (reply_iv, reply_cipher_text) = self.bob.accept_and_reply_to_msg(iv, cipher_text);
         let reply_plain_text = (self.decryptor)(&reply_iv, &reply_cipher_text);
-        println!("S5C34 - mitm can zero decrypt to see: [{}]", b2s(&reply_plain_text));
+        println!("S5C34/35 - mitm can snoop decrypt to see: [{}]", b2s(&reply_plain_text));
         (reply_iv, reply_cipher_text)
     }
 
@@ -115,6 +146,8 @@ impl<'a> DHServer for DHMitm<'a> {
 
 #[derive(Default)]
 struct DH {
+    name: String,
+
     p: BigUint,
     g: BigUint,
 
@@ -141,7 +174,7 @@ impl DHServer for DH {
     }
 
     fn accept_and_reply_to_msg(&mut self, iv: &[u8], cipher_text: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        println!("S5C34 - bob sees [{}]", bytes2hex(&cipher_text));
+        println!("S5C34/35 - bob sees [{}]", bytes2hex(&cipher_text));
         let key = self.derive_key(); 
         self.received_msg = aes128_cbc_decode(&key, iv, cipher_text);
         let return_iv = get_random_bytes(16);
@@ -156,8 +189,10 @@ impl DHServer for DH {
 }
 
 impl DH {
-    pub fn new() -> DH {
-        DH::default()
+    pub fn new(name: &str) -> DH {
+        let mut dh = DH::default();
+        dh.name = name.to_string();
+        dh
     }
 
     fn derive_key(&self) -> Vec<u8> {
@@ -191,8 +226,8 @@ pub fn challenge34() {
     let p = BigUint::from_bytes_be(&hex2bytes(DH::P_NIST_HEX_STR).expect("Decode hex failed"));
     let g = 2.to_biguint().unwrap();
     {
-        let mut alice = DH::new();
-        let mut bob = DH::new();
+        let mut alice = DH::new("alice");
+        let mut bob = DH::new("bob");
         alice.init(&p, &g);
         let msg = s2b("hello, there");
         println!("S5C34 - alice send : [{}]", b2s(&msg));
@@ -203,8 +238,8 @@ pub fn challenge34() {
         println!("S5C34 - alice got correct reply?: {}", reply_good);
     }
     {
-        let mut alice = DH::new();
-        let mut bob = DH::new();
+        let mut alice = DH::new("alice");
+        let mut bob = DH::new("bob");
         let mut mitm = DHMitm::new(&mut bob, decrypt_with_zero_key, replace_pubkey_with_p, keep_generator);
         alice.init(&p, &g);
         let msg = s2b("hello, there - Mr Who?");
